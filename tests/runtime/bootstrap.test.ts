@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   createLocalDevLarkTransport,
   resolveBridgeConfig,
+  resolveStoragePath,
 } from '../../src/runtime/bootstrap.ts';
 
 test('resolves runtime config from environment overrides', () => {
@@ -59,4 +60,12 @@ test('creates a local dev transport that can receive and send messages', async (
       text: 'hello',
     },
   ]);
+});
+
+test('resolves the storage path from the environment', () => {
+  const storagePath = resolveStoragePath({
+    BRIDGE_STORAGE_PATH: '/tmp/bridge-store.json',
+  });
+
+  assert.equal(storagePath, '/tmp/bridge-store.json');
 });

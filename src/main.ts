@@ -1,10 +1,12 @@
 import { pathToFileURL } from 'node:url';
 
 import { createBridgeApp } from './app.ts';
-import { createLocalDevLarkTransport, resolveBridgeConfig } from './runtime/bootstrap.ts';
+import { createLocalDevLarkTransport, resolveBridgeConfig, resolveStoragePath } from './runtime/bootstrap.ts';
+import { JsonBindingStore } from './storage/json-binding-store.ts';
 
 export async function run(): Promise<void> {
   const config = resolveBridgeConfig();
+  const storagePath = resolveStoragePath();
   const transport = createLocalDevLarkTransport({
     onSend(message) {
       console.log(`[codex-bridge] outbound -> ${message.sessionId}: ${message.text}`);
@@ -14,6 +16,7 @@ export async function run(): Promise<void> {
   const app = createBridgeApp({
     config,
     larkTransport: transport,
+    bindingStore: new JsonBindingStore(storagePath),
   });
 
   await app.start();
@@ -25,7 +28,7 @@ export async function run(): Promise<void> {
       server.once('error', reject);
       server.listen(config.server.port, config.server.host, () => {
         console.log(
-          `[codex-bridge] listening on http://${config.server.host}:${config.server.port} (storage: ${config.storage.path})`,
+          `[codex-bridge] listening on http://${config.server.host}:${config.server.port} (storage: ${storagePath})`,
         );
         resolve();
       });
@@ -39,7 +42,7 @@ export async function run(): Promise<void> {
     console.warn('[codex-bridge] HTTP listen is unavailable in this environment, continuing in dry-run mode');
     keepAlive = setInterval(() => {}, 60_000);
     console.log(
-      `[codex-bridge] dry-run active (storage: ${config.storage.path}); set BRIDGE_PORT/BRIDGE_HOST in a normal environment to enable HTTP`,
+      `[codex-bridge] dry-run active (storage: ${storagePath}); set BRIDGE_PORT/BRIDGE_HOST in a normal environment to enable HTTP`,
     );
   }
 

@@ -6,6 +6,11 @@ export interface BindingStore {
   deleteBySession(sessionId: string): void;
 }
 
+export interface BindingRecord {
+  projectInstanceId: string;
+  sessionId: string;
+}
+
 export class InMemoryBindingStore implements BindingStore {
   private readonly projectToSession = new Map<string, string>();
   private readonly sessionToProject = new Map<string, string>();
@@ -41,4 +46,8 @@ export class InMemoryBindingStore implements BindingStore {
       this.projectToSession.delete(projectInstanceId);
     }
   }
+}
+
+export interface BindingSnapshot {
+  bindings: BindingRecord[];
 }

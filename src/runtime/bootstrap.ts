@@ -37,6 +37,10 @@ export function resolveBridgeConfig(env: RuntimeEnv = process.env): BridgeConfig
   });
 }
 
+export function resolveStoragePath(env: RuntimeEnv = process.env): string {
+  return env.BRIDGE_STORAGE_PATH ?? './data/bridge.json';
+}
+
 export function createLocalDevLarkTransport(options?: {
   onSend?: (message: { sessionId: string; text: string }) => void;
   onEmit?: (event: LarkEventPayload) => void;

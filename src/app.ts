@@ -9,6 +9,7 @@ import type { BridgeConfig } from './types/index.ts';
 import { InMemoryBindingStore } from './storage/binding-store.ts';
 import type { LarkTransport } from './adapters/lark/adapter.ts';
 import type { OpenClawLarkModule } from './adapters/lark/openclaw-lark.ts';
+import type { BindingStore } from './storage/binding-store.ts';
 
 export interface BridgeRuntime {
   config: BridgeConfig;
@@ -24,10 +25,11 @@ export interface BridgeRuntime {
 export function createBridgeApp(options: {
   config: BridgeConfig;
   larkTransport: LarkTransport;
+  bindingStore?: BindingStore;
   openclawConfig?: unknown;
   openclawLark?: OpenClawLarkModule;
 }): BridgeRuntime {
-  const bindingStore = new InMemoryBindingStore();
+  const bindingStore = options.bindingStore ?? new InMemoryBindingStore();
   const bindingService = new BindingService(bindingStore);
   const router = new BridgeRouter(bindingService);
   const larkAdapter = new LarkAdapter(options.larkTransport);
