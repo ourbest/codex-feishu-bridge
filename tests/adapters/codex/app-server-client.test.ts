@@ -1,0 +1,166 @@
+import assert from 'node:assert/strict';
+import { PassThrough } from 'node:stream';
+import test from 'node:test';
+
+import { CodexAppServerClient } from '../../../src/adapters/codex/app-server-client.ts';
+
+test('initializes codex app-server, starts a thread, and collects streamed agent text', async () => {
+  const writes: string[] = [];
+  const stdout = new PassThrough();
+
+  const client = new CodexAppServerClient({
+    command: 'codex',
+    args: ['app-server'],
+    clientInfo: {
+      name: 'bridge-test',
+      title: 'Bridge Test',
+      version: '0.1.0',
+    },
+    spawnAppServer() {
+      return {
+        stdin: {
+          write(chunk: string) {
+            const text = String(chunk);
+            writes.push(text);
+
+            const payload = JSON.parse(text);
+            if (payload.method === 'initialize') {
+              stdout.write(`${JSON.stringify({ id: payload.id, result: {} })}\n`);
+            } else if (payload.method === 'thread/start') {
+              stdout.write(`${JSON.stringify({ id: payload.id, result: { thread: { id: 'thr_123' } } })}\n`);
+            } else if (payload.method === 'turn/start') {
+              stdout.write(`${JSON.stringify({ id: payload.id, result: { turn: { id: 'turn_1' } } })}\n`);
+              stdout.write(
+                `${JSON.stringify({ method: 'item/agentMessage/delta', params: { itemId: 'item-1', text: 'hello' } })}\n`,
+              );
+              stdout.write(
+                `${JSON.stringify({ method: 'item/agentMessage/delta', params: { itemId: 'item-1', text: ' world' } })}\n`,
+              );
+              stdout.write(
+                `${JSON.stringify({
+                  method: 'turn/completed',
+                  params: { threadId: 'thr_123', turnId: 'turn_1', status: 'completed' },
+                })}\n`,
+              );
+            }
+
+            return true;
+          },
+        },
+        stdout,
+        stderr: new PassThrough(),
+        kill() {
+          return true;
+        },
+      };
+    },
+  });
+
+  const reply = await client.generateReply({
+    text: 'Summarize this repo.',
+  });
+
+  assert.equal(reply, 'hello world');
+  assert.deepEqual(
+    writes.map((entry) => JSON.parse(entry)),
+    [
+      {
+        id: 0,
+        method: 'initialize',
+        params: {
+          clientInfo: {
+            name: 'bridge-test',
+            title: 'Bridge Test',
+            version: '0.1.0',
+          },
+        },
+      },
+      {
+        method: 'initialized',
+        params: {},
+      },
+      {
+        id: 1,
+        method: 'thread/start',
+        params: {
+          approvalPolicy: 'never',
+          model: 'gpt-5.4',
+          sandbox: 'workspace-write',
+          serviceName: 'codex-bridge',
+        },
+      },
+      {
+        id: 2,
+        method: 'turn/start',
+        params: {
+          approvalPolicy: 'never',
+          input: [{ text: 'Summarize this repo.', type: 'text' }],
+          model: 'gpt-5.4',
+          sandbox: 'workspace-write',
+          threadId: 'thr_123',
+        },
+      },
+    ],
+  );
+});
+
+test('resolves codex replies from completed agent items when no delta stream arrives', async () => {
+  const stdout = new PassThrough();
+
+  const client = new CodexAppServerClient({
+    command: 'codex',
+    args: ['app-server'],
+    clientInfo: {
+      name: 'bridge-test',
+      title: 'Bridge Test',
+      version: '0.1.0',
+    },
+    spawnAppServer() {
+      return {
+        stdin: {
+          write(chunk: string) {
+            const payload = JSON.parse(String(chunk));
+            if (payload.method === 'initialize') {
+              stdout.write(`${JSON.stringify({ id: payload.id, result: {} })}\n`);
+            } else if (payload.method === 'thread/start') {
+              stdout.write(`${JSON.stringify({ id: payload.id, result: { thread: { id: 'thr_123' } } })}\n`);
+            } else if (payload.method === 'turn/start') {
+              stdout.write(`${JSON.stringify({ id: payload.id, result: { turn: { id: 'turn_1' } } })}\n`);
+              stdout.write(
+                `${JSON.stringify({
+                  method: 'item/completed',
+                  params: {
+                    item: {
+                      id: 'item-1',
+                      type: 'agentMessage',
+                      text: 'final answer',
+                    },
+                  },
+                })}\n`,
+              );
+              stdout.write(
+                `${JSON.stringify({
+                  method: 'turn/completed',
+                  params: { threadId: 'thr_123', turnId: 'turn_1', status: 'completed' },
+                })}\n`,
+              );
+            }
+
+            return true;
+          },
+        },
+        stdout,
+        stderr: new PassThrough(),
+        kill() {
+          return true;
+        },
+      };
+    },
+  });
+
+  const reply = await client.generateReply({
+    text: 'Summarize this repo.',
+  });
+
+  assert.equal(reply, 'final answer');
+});

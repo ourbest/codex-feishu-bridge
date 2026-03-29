@@ -11,6 +11,8 @@ export interface LarkEventPayload {
 export interface LarkTransport {
   onEvent(handler: (event: LarkEventPayload) => void | Promise<void>): void;
   sendMessage(message: { sessionId: string; text: string }): Promise<void>;
+  start?(): Promise<void>;
+  stop?(): Promise<void>;
 }
 
 type MessageHandler = (message: InboundMessage) => Promise<void>;
@@ -33,7 +35,6 @@ export class LarkAdapter {
       return;
     }
 
-    this.started = true;
     this.transport.onEvent(async (event) => {
       const normalized = this.normalizeInboundEvent(event);
       if (normalized === null || this.messageHandler === null) {
@@ -42,9 +43,12 @@ export class LarkAdapter {
 
       await this.messageHandler(normalized);
     });
+    await this.transport.start?.();
+    this.started = true;
   }
 
   async stop(): Promise<void> {
+    await this.transport.stop?.();
     this.started = false;
   }
 
