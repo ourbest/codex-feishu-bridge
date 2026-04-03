@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-`codex-bridge` is a bridge service connecting Codex project instances to IM sessions (primarily Feishu/Lark). It manages one-to-one bindings between `projectInstanceId` and `chatId`, routes inbound IM messages to bound Codex projects, and sends replies back to the originating IM session.
+`codex-bridge` is a bridge service connecting Codex project instances to IM sessions (Feishu/Lark). It manages one-to-one bindings between `projectInstanceId` and `chatId`, routes inbound IM messages to bound Codex projects, and sends replies back to the originating IM session.
 
 **Runtime**: Node.js 24 with ES modules and `--experimental-strip-types` flag.
 
@@ -41,14 +41,14 @@ src/main.ts                    # Entry point - resolves config and starts runtim
 ├── src/adapters/
 │   ├── lark/                  # Feishu/Lark transport layer
 │   │   ├── adapter.ts         # LarkAdapter + LarkTransport interface
-│   │   └── openclaw-lite-transport.ts  # Plugin process transport
+│   │   └── feishu-websocket.ts  # Official SDK WebSocket transport
 │   └── codex/                 # Codex app-server client
 │       └── app-server-client.ts  # WebSocket client for Codex
 └── src/runtime/
     ├── bootstrap.ts           # Config resolution + local dev transport
+    ├── feishu-config.ts       # Feishu credentials and WS config
     ├── codex-config.ts        # Codex project runtime configs (env-driven)
-    ├── codex-project-registry.ts  # Manages multiple Codex project sessions
-    └── openclaw-lite-config.ts   # Plugin runtime configuration
+    └── codex-project-registry.ts  # Manages multiple Codex project sessions
 ```
 
 ### Message Flow
@@ -65,9 +65,8 @@ Bindings persist to `BRIDGE_STORAGE_PATH` (default `./data/bridge.json`). Two st
 
 ### Transport Modes
 
-- **Default (local dev)**: `LocalDevLarkTransport` - in-process, console-based I/O
-- **Plugin runtime**: `OpenClawLiteTransport` - spawns a plugin subprocess for Feishu channel integration
-- **Codex connection**: `CodexAppServerClient` connects to Codex app-server via WebSocket (or console mode for stdin/stdout)
+- **Feishu WebSocket** (production): `createFeishuWebSocketTransport` — official `@larksuiteoapi/node-sdk` WebSocket client
+- **Local dev**: `LocalDevLarkTransport` — in-process, console-based I/O for development without Feishu
 
 ## HTTP API (port 3000)
 
@@ -86,12 +85,10 @@ Bindings persist to `BRIDGE_STORAGE_PATH` (default `./data/bridge.json`). Two st
 - `BRIDGE_PORT` - server port (default 3000)
 - `BRIDGE_STORAGE_PATH` - binding store path (default ./data/bridge.json)
 
-**Transport mode**:
-- `BRIDGE_OPENCLAW_LITE_ENABLED=1` - enable plugin runtime (instead of local dev transport)
-- `BRIDGE_OPENCLAW_LITE_PLUGIN_COMMAND` - plugin executable path
-- `BRIDGE_OPENCLAW_LITE_PLUGIN_ARGS_JSON` - plugin args as JSON array
-- `BRIDGE_OPENCLAW_LITE_PLUGIN_CWD` - plugin working directory
-- `BRIDGE_OPENCLAW_LITE_PLUGIN_ENV_JSON` - plugin env vars as JSON
+**Feishu WebSocket transport**:
+- `FEISHU_APP_ID` - Feishu application App ID (required for WS mode)
+- `FEISHU_APP_SECRET` - Feishu application App Secret (required for WS mode)
+- `BRIDGE_FEISHU_WS_ENABLED=1` - enable Feishu WebSocket transport
 
 **Codex runtime**:
 - `BRIDGE_CONSOLE=1` - terminal console mode (stdin/stdout)
