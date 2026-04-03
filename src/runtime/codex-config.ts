@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from 'node:fs';
+
 export interface RuntimeEnvCodexConfig {
   BRIDGE_CODEX_PROJECTS_JSON?: string;
   BRIDGE_CODEX_PROJECT_INSTANCE_ID?: string;
@@ -20,6 +22,32 @@ export interface CodexRuntimeConfig {
 }
 
 export type CodexProjectRuntimeConfig = CodexRuntimeConfig;
+
+export interface ProjectConfigEntry {
+  projectInstanceId: string;
+  websocketUrl?: string;
+}
+
+export function loadProjectsFromFile(filePath: string): ProjectConfigEntry[] | null {
+  try {
+    if (!existsSync(filePath)) {
+      return null;
+    }
+    const raw = readFileSync(filePath, 'utf8');
+    if (raw.trim() === '') {
+      return null;
+    }
+    const parsed = JSON.parse(raw) as { projects?: ProjectConfigEntry[] };
+    if (!Array.isArray(parsed.projects)) {
+      return null;
+    }
+    return parsed.projects.filter((p): p is ProjectConfigEntry =>
+      typeof p.projectInstanceId === 'string' && p.projectInstanceId.trim() !== ''
+    );
+  } catch {
+    return null;
+  }
+}
 
 function parseArgs(value: string | undefined): string[] {
   if (value === undefined || value.trim() === '') {
