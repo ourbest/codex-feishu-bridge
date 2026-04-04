@@ -12,6 +12,11 @@ export interface OutboundMessage {
   text: string;
 }
 
+export interface OutboundReaction {
+  targetMessageId: string;
+  emojiType: string;
+}
+
 export interface ProjectReply {
   text: string;
 }

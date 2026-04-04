@@ -48,6 +48,25 @@ curl http://127.0.0.1:3000/bindings/project/project-a
 curl http://127.0.0.1:3000/bindings/session/chat-a
 ```
 
+## Chat commands
+
+In Feishu/Lark chats, the bridge understands these commands:
+
+```text
+//bind <projectId>
+//unbind
+//list
+//sessions
+//reload projects
+//help
+app/list
+session/list
+session/get <id>
+thread/get <id>
+```
+
+`//sessions` shows the bridge binding plus the current Codex project state. `//reload projects` reloads `projects.json` immediately, which is useful after editing the project list on disk. The supported Codex passthrough commands are exactly `app/list`, `session/list`, `session/get <id>`, and `thread/get <id>`.
+
 ## Run Codex in background mode
 
 By default the bridge uses Codex app-server over `ws://127.0.0.1:4000`.
@@ -108,4 +127,3 @@ Plugin runtime env variables:
 - `chatId` is the routing key on the bridge side
 - The plugin runtime only forwards `chatId`, `event`, and `status`
 - Rebinding a project replaces the existing session binding
-

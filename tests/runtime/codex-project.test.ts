@@ -8,6 +8,7 @@ import { createCodexProjectSession } from '../../src/runtime/codex-project.ts';
 
 test('routes inbound lark messages through a codex project session', async () => {
   const sentMessages: Array<{ sessionId: string; text: string }> = [];
+  const reactions: Array<{ targetMessageId: string; emojiType: string }> = [];
   let eventHandler: ((event: LarkEventPayload) => Promise<void> | void) | null = null;
   const codexInputs: string[] = [];
 
@@ -18,11 +19,25 @@ test('routes inbound lark messages through a codex project session', async () =>
     async sendMessage(message) {
       sentMessages.push(message);
     },
+    async sendReaction(message) {
+      reactions.push(message);
+    },
   };
 
   const app = createBridgeApp({
     config: loadConfig({}),
     larkTransport: transport,
+    projectRegistry: {
+      async describeProject(projectInstanceId) {
+        return {
+          projectInstanceId,
+          configured: true,
+          active: false,
+          removed: false,
+          sessionCount: 0,
+        };
+      },
+    },
   });
 
   const codexProject = createCodexProjectSession({
@@ -50,6 +65,9 @@ test('routes inbound lark messages through a codex project session', async () =>
   });
 
   assert.deepEqual(codexInputs, ['hello']);
+  assert.deepEqual(reactions, [
+    { targetMessageId: 'message-1', emojiType: 'THUMBSUP' },
+  ]);
   assert.deepEqual(sentMessages, [{ sessionId: 'session-a', text: 'codex:hello' }]);
 
   await codexProject.stop();

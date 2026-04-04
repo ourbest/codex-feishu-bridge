@@ -1,4 +1,5 @@
 import type { InboundMessage, OutboundMessage } from '../../core/events/message.ts';
+import type { OutboundReaction } from '../../core/events/message.ts';
 
 export interface LarkEventPayload {
   sessionId: string;
@@ -11,6 +12,7 @@ export interface LarkEventPayload {
 export interface LarkTransport {
   onEvent(handler: (event: LarkEventPayload) => void | Promise<void>): void;
   sendMessage(message: { sessionId: string; text: string }): Promise<void>;
+  sendReaction(message: OutboundReaction): Promise<void>;
   start?(): Promise<void>;
   stop?(): Promise<void>;
 }
@@ -68,5 +70,9 @@ export class LarkAdapter {
       sessionId: message.targetSessionId,
       text: message.text,
     });
+  }
+
+  async react(message: OutboundReaction): Promise<void> {
+    await this.transport.sendReaction(message);
   }
 }

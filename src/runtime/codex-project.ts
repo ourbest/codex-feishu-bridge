@@ -3,6 +3,7 @@ import type { BridgeRouter } from '../core/router/router.ts';
 
 export interface CodexProjectClient {
   generateReply(input: { text: string; cwd?: string }): Promise<string>;
+  executeCommand?(input: { method: string; params: Record<string, unknown> }): Promise<unknown>;
   stop(): Promise<void>;
   onTextDelta?: ((text: string) => void) | null;
   onTurnCompleted?: (() => void) | null;
@@ -39,6 +40,14 @@ export class CodexProjectSession {
 
   async stop(): Promise<void> {
     await this.client.stop();
+  }
+
+  async executeCommand(input: { method: string; params: Record<string, unknown> }): Promise<unknown> {
+    if (this.client.executeCommand === undefined) {
+      throw new Error('Structured Codex commands are not supported by this client');
+    }
+
+    return await this.client.executeCommand(input);
   }
 
   private async enqueue<T>(task: () => Promise<T>): Promise<T> {

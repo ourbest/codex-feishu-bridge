@@ -28,22 +28,31 @@ export interface ProjectConfigEntry {
   websocketUrl?: string;
 }
 
+export function parseProjectConfigEntries(raw: string): ProjectConfigEntry[] | null {
+  if (raw.trim() === '') {
+    return null;
+  }
+
+  const parsed = JSON.parse(raw) as { projects?: ProjectConfigEntry[] };
+  if (!Array.isArray(parsed.projects)) {
+    return null;
+  }
+
+  return parsed.projects.filter((entry): entry is ProjectConfigEntry =>
+    typeof entry === 'object' &&
+    entry !== null &&
+    typeof entry.projectInstanceId === 'string' &&
+    entry.projectInstanceId.trim() !== ''
+  );
+}
+
 export function loadProjectsFromFile(filePath: string): ProjectConfigEntry[] | null {
   try {
     if (!existsSync(filePath)) {
       return null;
     }
     const raw = readFileSync(filePath, 'utf8');
-    if (raw.trim() === '') {
-      return null;
-    }
-    const parsed = JSON.parse(raw) as { projects?: ProjectConfigEntry[] };
-    if (!Array.isArray(parsed.projects)) {
-      return null;
-    }
-    return parsed.projects.filter((p): p is ProjectConfigEntry =>
-      typeof p.projectInstanceId === 'string' && p.projectInstanceId.trim() !== ''
-    );
+    return parseProjectConfigEntries(raw);
   } catch {
     return null;
   }

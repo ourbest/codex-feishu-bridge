@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import test from 'node:test';
 
 import { resolveCodexRuntimeConfig, resolveCodexRuntimeConfigs } from '../../src/runtime/codex-config.ts';
+import { createProjectConfigWatcher } from '../../src/runtime/project-config-watcher.ts';
 
 test('returns null when codex runtime is not enabled', () => {
   assert.equal(resolveCodexRuntimeConfig({}), null);
@@ -79,4 +83,128 @@ test('resolves multiple codex runtime configs from environment json', () => {
       },
     ],
   );
+});
+
+test('keeps the last valid projects snapshot when reload encounters invalid json', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'codex-bridge-projects-'));
+  const filePath = join(tempDir, 'projects.json');
+  const firstSnapshot = [
+    {
+      projectInstanceId: 'project-a',
+      websocketUrl: 'ws://127.0.0.1:4000',
+    },
+  ];
+
+  writeFileSync(filePath, `${JSON.stringify({ projects: firstSnapshot }, null, 2)}\n`, 'utf8');
+
+  const seenSnapshots: string[][] = [];
+  const watcher = createProjectConfigWatcher({
+    filePath,
+    onProjectsChanged(projects) {
+      seenSnapshots.push(projects.map((entry) => entry.projectInstanceId));
+    },
+  });
+
+  await watcher.reload();
+  assert.deepEqual(watcher.getProjects(), firstSnapshot);
+
+  writeFileSync(filePath, '{ invalid json', 'utf8');
+  await watcher.reload();
+
+  assert.deepEqual(watcher.getProjects(), firstSnapshot);
+  assert.deepEqual(seenSnapshots, [['project-a']]);
+
+  rmSync(tempDir, { recursive: true, force: true });
+});
+
+test('can start a projects watcher even when the file does not exist yet', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'codex-bridge-projects-'));
+  const filePath = join(tempDir, 'projects.json');
+
+  const watcher = createProjectConfigWatcher({
+    filePath,
+  });
+
+  await watcher.start();
+  await watcher.reload();
+  await watcher.stop();
+
+  assert.deepEqual(watcher.getProjects(), []);
+
+  rmSync(tempDir, { recursive: true, force: true });
+});
+
+test('serializes watcher reload publications so stale snapshots do not win', async () => {
+  const firstSnapshot = [{ projectInstanceId: 'project-a', websocketUrl: 'ws://one' }];
+  const secondSnapshot = [{ projectInstanceId: 'project-a', websocketUrl: 'ws://two' }];
+  const appliedSnapshots: string[][] = [];
+  const blockers: Array<() => void> = [];
+
+  let readCount = 0;
+  const watcher = createProjectConfigWatcher({
+    filePath: '/tmp/unused-projects.json',
+    readProjects: async () => {
+      readCount += 1;
+      return readCount === 1 ? firstSnapshot : secondSnapshot;
+    },
+    onProjectsChanged: async (projects) => {
+      appliedSnapshots.push(projects.map((entry) => entry.websocketUrl ?? ''));
+      if (appliedSnapshots.length === 1) {
+        await new Promise<void>((resolve) => {
+          blockers.push(resolve);
+        });
+      }
+    },
+  });
+
+  const firstReload = watcher.reload();
+  await Promise.resolve();
+  const secondReload = watcher.reload();
+  await Promise.resolve();
+
+  assert.deepEqual(appliedSnapshots, [['ws://one']]);
+
+  blockers.pop()?.();
+  await firstReload;
+  await secondReload;
+
+  assert.deepEqual(appliedSnapshots, [['ws://one'], ['ws://two']]);
+  assert.deepEqual(watcher.getProjects(), secondSnapshot);
+});
+
+test('stop waits for an in-flight reload to finish before returning', async () => {
+  const firstSnapshot = [{ projectInstanceId: 'project-a', websocketUrl: 'ws://one' }];
+  let release: (() => void) | null = null;
+  let startedResolve: (() => void) | null = null;
+  const started = new Promise<void>((resolve) => {
+    startedResolve = resolve;
+  });
+
+  const watcher = createProjectConfigWatcher({
+    filePath: '/tmp/unused-projects.json',
+    readProjects: async () => firstSnapshot,
+    onProjectsChanged: async () => {
+      startedResolve?.();
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    },
+  });
+
+  const reloadPromise = watcher.reload();
+  await started;
+
+  const stopPromise = watcher.stop();
+  let stopFinished = false;
+  stopPromise.then(() => {
+    stopFinished = true;
+  });
+
+  assert.equal(stopFinished, false);
+
+  release?.();
+  await reloadPromise;
+  await stopPromise;
+
+  assert.equal(stopFinished, true);
 });

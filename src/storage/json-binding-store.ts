@@ -93,4 +93,11 @@ export class JsonBindingStore implements BindingStore {
     this.removeSession(sessionId);
     this.persist();
   }
+
+  getAllBindings(): BindingRecord[] {
+    return this.snapshot.bindings.map((entry) => ({
+      projectInstanceId: entry.projectInstanceId,
+      sessionId: entry.sessionId,
+    }));
+  }
 }

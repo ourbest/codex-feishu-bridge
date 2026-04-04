@@ -1,4 +1,5 @@
 import type { LarkEventPayload, LarkTransport } from './adapter.ts';
+import { buildFeishuPostMessage, isMarkdown } from './md-to-feishu.ts';
 
 export interface FeishuWebSocketTransportOptions {
   appId: string;
@@ -13,10 +14,15 @@ export interface FeishuWebSocketTransportOptions {
   sendMessageFn: (opts: {
     receiveId: string;
     msgType: string;
-    content: string;
+    content: string | object;
+  }) => Promise<void>;
+  sendReactionFn: (opts: {
+    messageId: string;
+    emojiType: string;
   }) => Promise<void>;
   onStderr?: (text: string) => void;
   onSend?: (message: { sessionId: string; text: string }) => void;
+  onReact?: (message: { targetMessageId: string; emojiType: string }) => void;
 }
 
 export interface FeishuWebSocketTransport extends LarkTransport {
@@ -135,11 +141,26 @@ export function createFeishuWebSocketTransport(options: FeishuWebSocketTransport
     async sendMessage(message) {
       enqueueMessage(message.sessionId, async () => {
         options.onSend?.(message);
+        const payload = isMarkdown(message.text)
+          ? buildFeishuPostMessage(message.text)
+          : {
+              msg_type: 'text',
+              content: JSON.stringify({ text: message.text }),
+            };
+
+        console.log(`[feishu] sending ${payload.msg_type}, session=${message.sessionId}`);
         await options.sendMessageFn({
           receiveId: message.sessionId,
-          msgType: 'text',
-          content: JSON.stringify({ text: message.text }),
+          msgType: payload.msg_type,
+          content: payload.content,
         });
+      });
+    },
+    async sendReaction(message) {
+      options.onReact?.(message);
+      await options.sendReactionFn({
+        messageId: message.targetMessageId,
+        emojiType: message.emojiType,
       });
     },
   };

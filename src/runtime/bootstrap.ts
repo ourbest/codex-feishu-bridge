@@ -6,6 +6,7 @@ export interface RuntimeEnv {
   BRIDGE_HOST?: string;
   BRIDGE_PORT?: string;
   BRIDGE_STORAGE_PATH?: string;
+  BRIDGE_PROJECTS_FILE?: string;
 }
 
 export interface LocalDevLarkTransport extends LarkTransport {
@@ -41,8 +42,13 @@ export function resolveStoragePath(env: RuntimeEnv = process.env): string {
   return env.BRIDGE_STORAGE_PATH ?? './data/bridge.json';
 }
 
+export function resolveProjectsFilePath(env: RuntimeEnv = process.env): string {
+  return env.BRIDGE_PROJECTS_FILE ?? './projects.json';
+}
+
 export function createLocalDevLarkTransport(options?: {
   onSend?: (message: { sessionId: string; text: string }) => void;
+  onReact?: (message: { targetMessageId: string; emojiType: string }) => void;
   onEmit?: (event: LarkEventPayload) => void;
 }): LocalDevLarkTransport {
   let eventHandler: ((event: LarkEventPayload) => void | Promise<void>) | null = null;
@@ -53,6 +59,9 @@ export function createLocalDevLarkTransport(options?: {
     },
     async sendMessage(message) {
       options?.onSend?.(message);
+    },
+    async sendReaction(message) {
+      options?.onReact?.(message);
     },
     emit(event) {
       options?.onEmit?.(event);

@@ -7,6 +7,7 @@ test('normalizes a lark event into an inbound bridge message', () => {
   const adapter = new LarkAdapter({
     onEvent() {},
     async sendMessage() {},
+    async sendReaction() {},
   });
 
   const event = adapter.normalizeInboundEvent({
@@ -34,6 +35,7 @@ test('sends outbound bridge messages through the lark transport', async () => {
     async sendMessage(message) {
       sentMessages.push(message);
     },
+    async sendReaction() {},
   });
 
   await adapter.send({

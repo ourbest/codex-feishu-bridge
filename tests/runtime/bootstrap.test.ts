@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   createLocalDevLarkTransport,
   resolveBridgeConfig,
+  resolveProjectsFilePath,
   resolveStoragePath,
 } from '../../src/runtime/bootstrap.ts';
 
@@ -21,9 +22,13 @@ test('resolves runtime config from environment overrides', () => {
 
 test('creates a local dev transport that can receive and send messages', async () => {
   const sentMessages: Array<{ sessionId: string; text: string }> = [];
+  const reactions: Array<{ targetMessageId: string; emojiType: string }> = [];
   const transport = createLocalDevLarkTransport({
     onSend(message) {
       sentMessages.push(message);
+    },
+    onReact(message) {
+      reactions.push(message);
     },
   });
 
@@ -38,6 +43,10 @@ test('creates a local dev transport that can receive and send messages', async (
   await transport.sendMessage({
     sessionId: 'session-a',
     text: 'reply:hello',
+  });
+  await transport.sendReaction({
+    targetMessageId: 'message-1',
+    emojiType: 'THUMBSUP',
   });
 
   transport.emit({
@@ -54,6 +63,12 @@ test('creates a local dev transport that can receive and send messages', async (
       text: 'reply:hello',
     },
   ]);
+  assert.deepEqual(reactions, [
+    {
+      targetMessageId: 'message-1',
+      emojiType: 'THUMBSUP',
+    },
+  ]);
   assert.deepEqual(receivedEvents, [
     {
       sessionId: 'session-a',
@@ -68,4 +83,15 @@ test('resolves the storage path from the environment', () => {
   });
 
   assert.equal(storagePath, '/tmp/bridge-store.json');
+});
+
+test('resolves the projects file path from the environment', () => {
+  assert.equal(
+    resolveProjectsFilePath({
+      BRIDGE_PROJECTS_FILE: '/tmp/projects.json',
+    }),
+    '/tmp/projects.json',
+  );
+
+  assert.equal(resolveProjectsFilePath({}), './projects.json');
 });

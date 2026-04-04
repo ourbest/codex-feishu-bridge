@@ -1,35 +1,78 @@
 import { pathToFileURL } from 'node:url';
+import https from 'node:https';
 import 'dotenv/config';
 
 import { createBridgeApp } from './app.ts';
-import { createLocalDevLarkTransport, resolveBridgeConfig, resolveStoragePath } from './runtime/bootstrap.ts';
+import {
+  createLocalDevLarkTransport,
+  resolveBridgeConfig,
+  resolveProjectsFilePath,
+  resolveStoragePath,
+} from './runtime/bootstrap.ts';
 import { loadProjectsFromFile, resolveCodexRuntimeConfigs, type ProjectConfigEntry } from './runtime/codex-config.ts';
 import { CodexAppServerClient } from './adapters/codex/app-server-client.ts';
 import { resolveConsoleRuntimeConfig, runCodexConsoleSession } from './runtime/codex-console.ts';
 import { createProjectRegistry } from './runtime/project-registry.ts';
+import { createProjectConfigWatcher } from './runtime/project-config-watcher.ts';
 import { resolveFeishuRuntimeConfig } from './runtime/feishu-config.ts';
 import { createFeishuWebSocketTransport } from './adapters/lark/feishu-websocket.ts';
 import { JsonBindingStore } from './storage/json-binding-store.ts';
+import { defaultHttpInstance, LoggerLevel, WSClient, EventDispatcher, Client } from '@larksuiteoapi/node-sdk';
 
 export async function run(): Promise<void> {
   const config = resolveBridgeConfig();
   const storagePath = resolveStoragePath();
+  const projectsFilePath = resolveProjectsFilePath();
   const consoleRuntime = resolveConsoleRuntimeConfig();
   const codexRuntimes = resolveCodexRuntimeConfigs() ?? [];
   const feishuRuntime = resolveFeishuRuntimeConfig();
+  let projectRegistryImpl: ReturnType<typeof createProjectRegistry> | null = null;
+  let projectConfigWatcher: ReturnType<typeof createProjectConfigWatcher> | null = null;
+  let reloadProjectsHandler: (() => Promise<string[]>) | null = null;
+  let projectConfigEntries: ProjectConfigEntry[] = loadProjectsFromFile(projectsFilePath) ?? [];
 
-  const transport = feishuRuntime !== null && feishuRuntime.wsEnabled
+  const { transport, sendToOpenId } = feishuRuntime !== null && feishuRuntime.wsEnabled
     ? await createFeishuWebSocketTransportFromRuntime(feishuRuntime)
-    : createLocalDevLarkTransport({
+    : { transport: createLocalDevLarkTransport({
         onSend(message) {
           console.log(`[codex-bridge] outbound -> ${message.sessionId}: ${message.text}`);
         },
-      });
+        onReact(message) {
+          console.log(`[codex-bridge] reaction -> ${message.targetMessageId}: ${message.emojiType}`);
+        },
+      }), sendToOpenId: null };
 
   const app = createBridgeApp({
     config,
     larkTransport: transport,
     bindingStore: new JsonBindingStore(storagePath),
+    projectRegistry: {
+      async describeProject(projectInstanceId: string) {
+        if (projectRegistryImpl === null) {
+          throw new Error('project registry is not initialized');
+        }
+        return projectRegistryImpl.describeProject(projectInstanceId);
+      },
+    },
+    reloadProjects: async () => {
+      if (reloadProjectsHandler === null) {
+        return ['[codex-bridge] project reload is not configured'];
+      }
+
+      return await reloadProjectsHandler();
+    },
+    executeStructuredCodexCommand: async (input) => {
+      if (projectRegistryImpl === null) {
+        return ['[codex-bridge] codex command support is not configured'];
+      }
+
+      const result = await projectRegistryImpl.executeCommand(input.projectInstanceId, {
+        method: input.method,
+        params: input.params,
+      });
+
+      return [`[codex-bridge] ${JSON.stringify(result)}`];
+    },
   });
 
   if (consoleRuntime !== null) {
@@ -124,40 +167,72 @@ export async function run(): Promise<void> {
     return;
   }
 
-  let codexProjectRegistry = null;
-  const projectConfigEntries: ProjectConfigEntry[] = loadProjectsFromFile('projects.json') ?? [];
-  if (projectConfigEntries.length > 0) {
-    const projectRegistry = createProjectRegistry({
-      getProjectConfig: (projectInstanceId: string) => {
-        const entry = projectConfigEntries.find((p) => p.projectInstanceId === projectInstanceId);
-        if (!entry || !entry.websocketUrl) return null;
-        return { projectInstanceId: entry.projectInstanceId, websocketUrl: entry.websocketUrl };
-      },
-      createClient: (projectInstanceId: string, websocketUrl: string) =>
-        new CodexAppServerClient({
-          command: 'codex',
-          args: ['app-server'],
-          clientInfo: { name: 'codex-bridge', title: 'Codex Bridge', version: '0.1.0' },
-          serviceName: 'codex-bridge',
-          transport: 'websocket',
-          websocketUrl,
-        }),
-      router: app.router,
-    });
+  projectRegistryImpl = createProjectRegistry({
+    getProjectConfig: (projectInstanceId: string) => {
+      const entry = projectConfigEntries.find((p) => p.projectInstanceId === projectInstanceId);
+      if (!entry || !entry.websocketUrl) return null;
+      return { projectInstanceId: entry.projectInstanceId, websocketUrl: entry.websocketUrl };
+    },
+    createClient: (projectInstanceId: string, websocketUrl: string) =>
+      new CodexAppServerClient({
+        command: 'codex',
+        args: ['app-server'],
+        clientInfo: { name: 'codex-bridge', title: 'Codex Bridge', version: '0.1.0' },
+        serviceName: 'codex-bridge',
+        transport: 'websocket',
+        websocketUrl,
+      }),
+    router: app.router,
+  });
 
-    app.bindingService.onBindingChange((e) => {
-      void projectRegistry.onBindingChanged(e);
-    });
+  app.bindingService.onBindingChange((e) => {
+    void projectRegistryImpl?.onBindingChanged(e);
+  });
 
-    for (const binding of app.bindingService.getAllBindings()) {
-      await projectRegistry.onBindingChanged({ type: 'bound', projectId: binding.projectInstanceId, sessionId: binding.sessionId });
+  projectConfigWatcher = createProjectConfigWatcher({
+    filePath: projectsFilePath,
+    onProjectsChanged: async (projects) => {
+      projectConfigEntries = projects;
+      if (projectRegistryImpl === null) {
+        return;
+      }
+      await projectRegistryImpl.reconcileProjectConfigs(projectConfigEntries);
+      for (const binding of await app.bindingService.getAllBindings()) {
+        await projectRegistryImpl.onBindingChanged({
+          type: 'bound',
+          projectId: binding.projectInstanceId,
+          sessionId: binding.sessionId,
+        });
+      }
+    },
+  });
+  reloadProjectsHandler = async () => {
+    if (projectConfigWatcher === null) {
+      return ['[codex-bridge] project reload is not configured'];
     }
 
-    codexProjectRegistry = projectRegistry;
-    console.log(`[codex-bridge] project registry active for ${projectConfigEntries.length} project${projectConfigEntries.length === 1 ? '' : 's'}`);
-  }
+    const projects = await projectConfigWatcher.reload();
+    return [`[codex-bridge] reloaded projects: ${projects.length}`];
+  };
+
+  projectConfigEntries = await projectConfigWatcher.reload();
+  await projectRegistryImpl.reconcileProjectConfigs(projectConfigEntries);
+
+  console.log(`[codex-bridge] project registry active for ${projectConfigEntries.length} project${projectConfigEntries.length === 1 ? '' : 's'}`);
 
   await app.start();
+  await projectConfigWatcher.start();
+
+  // Send startup notification to specified openId
+  const startupNotifyOpenId = process.env.BRIDGE_STARTUP_NOTIFY_OPENID;
+  if (sendToOpenId && startupNotifyOpenId) {
+    try {
+      await sendToOpenId(startupNotifyOpenId, '[codex-bridge] 已上线');
+      console.log(`[codex-bridge] startup notification sent to ${startupNotifyOpenId}`);
+    } catch (err) {
+      console.warn(`[codex-bridge] failed to send startup notification:`, err);
+    }
+  }
 
   let keepAlive: NodeJS.Timeout | null = null;
   try {
@@ -189,9 +264,10 @@ export async function run(): Promise<void> {
       clearInterval(keepAlive);
       keepAlive = null;
     }
-    if (codexProjectRegistry !== null) {
-      await codexProjectRegistry.stop();
-      codexProjectRegistry = null;
+    await projectConfigWatcher?.stop();
+    if (projectRegistryImpl !== null) {
+      await projectRegistryImpl.stop();
+      projectRegistryImpl = null;
     }
     await app.stop();
     await new Promise<void>((resolve) => {
@@ -208,23 +284,27 @@ export async function run(): Promise<void> {
 }
 
 async function createFeishuWebSocketTransportFromRuntime(feishuRuntime: { appId: string; appSecret: string }) {
-  const lark = await import('@larksuiteoapi/node-sdk');
+  const directHttpInstance = defaultHttpInstance;
+  directHttpInstance.defaults.proxy = false;
 
-  const wsClient = new lark.WSClient({
+  const wsClient = new WSClient({
     appId: feishuRuntime.appId,
     appSecret: feishuRuntime.appSecret,
-    loggerLevel: lark.LoggerLevel.debug,
+    loggerLevel: LoggerLevel.debug,
+    httpInstance: directHttpInstance,
+    agent: new https.Agent({ keepAlive: true }),
   });
 
-  const eventDispatcher = new lark.EventDispatcher({});
+  const eventDispatcher = new EventDispatcher({});
 
-  const restClient = new lark.Client({
+  const restClient = new Client({
     appId: feishuRuntime.appId,
     appSecret: feishuRuntime.appSecret,
-    loggerLevel: lark.LoggerLevel.warn,
+    loggerLevel: LoggerLevel.warn,
+    httpInstance: directHttpInstance,
   });
 
-  return createFeishuWebSocketTransport({
+  const transport = createFeishuWebSocketTransport({
     appId: feishuRuntime.appId,
     appSecret: feishuRuntime.appSecret,
     wsClient,
@@ -241,9 +321,38 @@ async function createFeishuWebSocketTransportFromRuntime(feishuRuntime: { appId:
         },
       });
     },
+    sendReactionFn: async ({ messageId, emojiType }) => {
+      await restClient.im.v1.messageReaction.create({
+        data: {
+          reaction_type: {
+            emoji_type: emojiType,
+          },
+        },
+        path: {
+          message_id: messageId,
+        },
+      });
+    },
     onStderr: (text) => process.stderr.write(text),
     onSend: (message) => console.log(`[codex-bridge] outbound -> ${message.sessionId}: ${message.text}`),
+    onReact: (message) => console.log(`[codex-bridge] reaction -> ${message.targetMessageId}: ${message.emojiType}`),
   });
+
+  // Function to send message to open_id
+  async function sendToOpenId(openId: string, text: string) {
+    await restClient.im.v1.message.create({
+      data: {
+        receive_id: openId,
+        msg_type: 'text',
+        content: JSON.stringify({ text }),
+      },
+      params: {
+        receive_id_type: 'open_id',
+      },
+    });
+  }
+
+  return { transport, sendToOpenId };
 }
 
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {

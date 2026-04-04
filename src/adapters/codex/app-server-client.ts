@@ -12,6 +12,11 @@ export interface CodexGenerateReplyInput {
   cwd?: string;
 }
 
+export interface CodexExecuteCommandInput {
+  method: string;
+  params: Record<string, unknown>;
+}
+
 export interface CodexProcess {
   stdin: {
     write(chunk: string): boolean;
@@ -97,6 +102,11 @@ export class CodexAppServerClient {
     });
 
     return reply;
+  }
+
+  async executeCommand(input: CodexExecuteCommandInput): Promise<unknown> {
+    await this.ensureStarted();
+    return await this.sendRequest(input.method, input.params);
   }
 
   async stop(): Promise<void> {
