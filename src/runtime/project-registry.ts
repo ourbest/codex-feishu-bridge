@@ -116,6 +116,7 @@ export function createProjectRegistry(options: ProjectRegistryOptions): ProjectR
       if (event.type === 'bound' && event.projectId && event.sessionId) {
         const config = options.getProjectConfig(event.projectId);
         let entry = activeProjects.get(event.projectId);
+        let shouldStartThread = false;
 
         if (!entry) {
           if (!config) return;
@@ -130,6 +131,7 @@ export function createProjectRegistry(options: ProjectRegistryOptions): ProjectR
           activeProjects.set(event.projectId, entry);
           attachServerRequestHandler(event.projectId, client);
           attachThreadChangedHandler(event.projectId, client);
+          shouldStartThread = true;
 
           if (options.router) {
             options.router.registerProjectHandler(event.projectId, async ({ message }) => {
@@ -144,6 +146,7 @@ export function createProjectRegistry(options: ProjectRegistryOptions): ProjectR
         } else if (config && JSON.stringify(entry.config) !== JSON.stringify(config)) {
           await disconnectProject(event.projectId);
           entry = undefined;
+          shouldStartThread = true;
         } else if (!config && !entry.sessions.has(event.sessionId)) {
           return;
         }
@@ -162,6 +165,7 @@ export function createProjectRegistry(options: ProjectRegistryOptions): ProjectR
           activeProjects.set(event.projectId, entry);
           attachServerRequestHandler(event.projectId, client);
           attachThreadChangedHandler(event.projectId, client);
+          shouldStartThread = true;
 
           if (options.router) {
             options.router.registerProjectHandler(event.projectId, async ({ message }) => {
@@ -176,8 +180,13 @@ export function createProjectRegistry(options: ProjectRegistryOptions): ProjectR
         }
 
         markProjectKnown(event.projectId);
+        const isNewSession = !entry.sessions.has(event.sessionId);
         entry.sessions.add(event.sessionId);
         entry.bindingCount = entry.sessions.size;
+
+        if ((shouldStartThread || isNewSession) && entry.client.startThread !== undefined) {
+          await entry.client.startThread({ cwd: entry.config.cwd });
+        }
       }
 
       if ((event.type === 'session-unbound' || event.type === 'unbound') && (event.projectId || event.sessionId)) {

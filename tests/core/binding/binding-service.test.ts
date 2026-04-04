@@ -119,3 +119,33 @@ test('multiple observers all receive events', async () => {
   assert.deepEqual(events1[0], { type: 'bound', projectId: 'project-a', sessionId: 'session-a' });
   assert.deepEqual(events2[0], { type: 'bound', projectId: 'project-a', sessionId: 'session-a' });
 });
+
+test('bindProjectToSession waits for async observers', async () => {
+  const service = new BindingService(new InMemoryBindingStore());
+  let resolveObserver: (() => void) | null = null;
+  let observerStarted = false;
+
+  service.onBindingChange(async () => {
+    observerStarted = true;
+    await new Promise<void>((resolve) => {
+      resolveObserver = resolve;
+    });
+  });
+
+  const bindPromise = service.bindProjectToSession('project-a', 'session-a');
+  await Promise.resolve();
+
+  assert.equal(observerStarted, true);
+
+  let finished = false;
+  bindPromise.then(() => {
+    finished = true;
+  });
+
+  assert.equal(finished, false);
+
+  resolveObserver?.();
+  await bindPromise;
+
+  assert.equal(finished, true);
+});

@@ -7,35 +7,35 @@ export type BindingChangeEvent =
 
 export class BindingService {
   private readonly store: BindingStore;
-  private readonly observers: Array<(event: BindingChangeEvent) => void> = [];
+  private readonly observers: Array<(event: BindingChangeEvent) => void | Promise<void>> = [];
 
   constructor(store: BindingStore) {
     this.store = store;
   }
 
-  onBindingChange(observer: (event: BindingChangeEvent) => void): void {
+  onBindingChange(observer: (event: BindingChangeEvent) => void | Promise<void>): void {
     this.observers.push(observer);
   }
 
-  private notify(event: BindingChangeEvent): void {
+  private async notify(event: BindingChangeEvent): Promise<void> {
     for (const observer of this.observers) {
-      observer(event);
+      await observer(event);
     }
   }
 
   async bindProjectToSession(projectInstanceId: string, sessionId: string): Promise<void> {
     this.store.setBinding(projectInstanceId, sessionId);
-    this.notify({ type: 'bound', projectId: projectInstanceId, sessionId });
+    await this.notify({ type: 'bound', projectId: projectInstanceId, sessionId });
   }
 
   async unbindProject(projectInstanceId: string): Promise<void> {
     this.store.deleteByProject(projectInstanceId);
-    this.notify({ type: 'unbound', projectId: projectInstanceId });
+    await this.notify({ type: 'unbound', projectId: projectInstanceId });
   }
 
   async unbindSession(sessionId: string): Promise<void> {
     this.store.deleteBySession(sessionId);
-    this.notify({ type: 'session-unbound', sessionId });
+    await this.notify({ type: 'session-unbound', sessionId });
   }
 
   async getSessionByProject(projectInstanceId: string): Promise<string | null> {

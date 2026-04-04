@@ -12,6 +12,10 @@ export interface CodexGenerateReplyInput {
   cwd?: string;
 }
 
+export interface CodexStartThreadInput {
+  cwd?: string;
+}
+
 export interface CodexResumeThreadInput {
   threadId: string;
   cwd?: string;
@@ -118,6 +122,33 @@ export class CodexAppServerClient {
     });
 
     return reply;
+  }
+
+  async startThread(input: CodexStartThreadInput): Promise<string> {
+    await this.ensureStarted();
+
+    if (this.threadId !== null) {
+      return this.threadId;
+    }
+
+    const response = await this.sendRequest('thread/start', {
+      approvalPolicy: 'never',
+      cwd: input.cwd ?? this.options.cwd,
+      model: this.options.model ?? 'gpt-5.4-mini',
+      sandbox: 'workspace-write',
+      personality: 'friendly',
+      serviceName: this.options.serviceName ?? 'codex-bridge',
+    });
+
+    const threadId = this.readString(response, ['thread', 'id']);
+    if (threadId === null) {
+      throw new Error('Codex app-server thread/start response did not include thread.id');
+    }
+
+    this.threadId = threadId;
+    this.onThreadChanged?.(threadId);
+    this.options.onThreadChanged?.(threadId);
+    return threadId;
   }
 
   async executeCommand(input: CodexExecuteCommandInput): Promise<unknown> {

@@ -245,6 +245,86 @@ test('executes a structured codex command without starting a turn', async () => 
   );
 });
 
+test('starts a fresh thread with binding-friendly defaults', async () => {
+  const writes: string[] = [];
+  const stdout = new PassThrough();
+
+  const client = new CodexAppServerClient({
+    command: 'codex',
+    args: ['app-server'],
+    clientInfo: {
+      name: 'bridge-test',
+      title: 'Bridge Test',
+      version: '0.1.0',
+    },
+    spawnAppServer() {
+      return {
+        stdin: {
+          write(chunk: string) {
+            const text = String(chunk);
+            writes.push(text);
+
+            const payload = JSON.parse(text);
+            if (payload.method === 'initialize') {
+              stdout.write(`${JSON.stringify({ id: payload.id, result: {} })}\n`);
+            } else if (payload.method === 'thread/start') {
+              stdout.write(`${JSON.stringify({ id: payload.id, result: { thread: { id: 'thr_bind_1' } } })}\n`);
+            }
+
+            return true;
+          },
+        },
+        stdout,
+        stderr: new PassThrough(),
+        kill() {
+          return true;
+        },
+        on() {
+          return undefined;
+        },
+      };
+    },
+  });
+
+  const threadId = await client.startThread({
+    cwd: '/Users/yonghui/git/codex-bridge',
+  });
+
+  assert.equal(threadId, 'thr_bind_1');
+  assert.deepEqual(
+    writes.map((entry) => JSON.parse(entry)),
+    [
+      {
+        id: 0,
+        method: 'initialize',
+        params: {
+          clientInfo: {
+            name: 'bridge-test',
+            title: 'Bridge Test',
+            version: '0.1.0',
+          },
+        },
+      },
+      {
+        method: 'initialized',
+        params: {},
+      },
+      {
+        id: 1,
+        method: 'thread/start',
+        params: {
+          approvalPolicy: 'never',
+          cwd: '/Users/yonghui/git/codex-bridge',
+          model: 'gpt-5.4-mini',
+          sandbox: 'workspace-write',
+          personality: 'friendly',
+          serviceName: 'codex-bridge',
+        },
+      },
+    ],
+  );
+});
+
 test('resumes an existing thread before generating the next reply', async () => {
   const writes: string[] = [];
   const stdout = new PassThrough();

@@ -11,15 +11,24 @@ function createMockClient(projectId: string): CodexProjectClient {
 }
 
 test('creates connection when first binding is created', async () => {
+  const startCalls: Array<{ cwd?: string }> = [];
   const registry = createProjectRegistry({
-    getProjectConfig: (id) => id === 'project-a' ? { projectInstanceId: 'project-a', websocketUrl: 'ws://localhost:4000' } : null,
-    createClient: createMockClient,
+    getProjectConfig: (id) => id === 'project-a' ? { projectInstanceId: 'project-a', websocketUrl: 'ws://localhost:4000', cwd: '/repo/project-a' } : null,
+    createClient: () => ({
+      generateReply: async ({ text }) => `reply to ${text}`,
+      startThread: async ({ cwd }) => {
+        startCalls.push({ cwd });
+        return 'thr_bind_1';
+      },
+      stop: async () => {},
+    }),
   });
 
   await registry.onBindingChanged({ type: 'bound', projectId: 'project-a', sessionId: 'chat-1' });
 
   const handler = registry.getHandler('project-a');
   assert.ok(handler !== null);
+  assert.deepEqual(startCalls, [{ cwd: '/repo/project-a' }]);
 });
 
 test('does not reconnect if project already connected', async () => {

@@ -239,8 +239,8 @@ export async function run(): Promise<void> {
     router: app.router,
   });
 
-  app.bindingService.onBindingChange((e) => {
-    void projectRegistryImpl?.onBindingChanged(e);
+  app.bindingService.onBindingChange(async (e) => {
+    await projectRegistryImpl?.onBindingChanged(e);
   });
 
   projectConfigWatcher = createProjectConfigWatcher({
