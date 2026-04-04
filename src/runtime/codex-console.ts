@@ -1,5 +1,6 @@
 import { createInterface } from 'node:readline';
 
+import { resolvePathLikeInput } from './codex-config.ts';
 import type { CodexProjectClient } from './codex-project.ts';
 
 export interface CodexConsoleSessionOptions {
@@ -29,7 +30,10 @@ function isEnabled(value: string | undefined): boolean {
 }
 
 function resolveDefaultCwd(env: RuntimeEnvConsoleConfig): string {
-  return env.BRIDGE_CODEX_CWD?.trim() || `${env.HOME ?? process.env.HOME ?? process.cwd()}/git/codex-bridge`;
+  return (
+    resolvePathLikeInput(env.BRIDGE_CODEX_CWD, env.HOME ?? process.env.HOME) ||
+    `${env.HOME ?? process.env.HOME ?? process.cwd()}/git/codex-bridge`
+  );
 }
 
 export function resolveConsoleRuntimeConfig(env: RuntimeEnvConsoleConfig = process.env): ConsoleRuntimeConfig | null {

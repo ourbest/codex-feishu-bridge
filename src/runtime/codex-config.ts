@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
+import path from 'node:path';
 
 export interface RuntimeEnvCodexConfig {
   BRIDGE_CODEX_PROJECTS_JSON?: string;
@@ -24,6 +25,28 @@ export interface CodexRuntimeConfig {
 export type CodexProjectRuntimeConfig = CodexRuntimeConfig;
 
 export type ProjectConfigEntry = CodexRuntimeConfig;
+
+export function resolvePathLikeInput(value: string | undefined, homeDir: string | undefined = process.env.HOME): string | undefined {
+  const trimmed = value?.trim();
+  if (trimmed === undefined || trimmed === '') {
+    return undefined;
+  }
+
+  if (trimmed === '~') {
+    return homeDir?.trim() || undefined;
+  }
+
+  if (trimmed.startsWith('~/')) {
+    const resolvedHome = homeDir?.trim();
+    if (!resolvedHome) {
+      return trimmed.slice(2);
+    }
+
+    return path.join(resolvedHome, trimmed.slice(2));
+  }
+
+  return trimmed;
+}
 
 export function parseProjectConfigEntries(raw: string): ProjectConfigEntry[] | null {
   if (raw.trim() === '') {
@@ -76,7 +99,7 @@ function normalizeProjectConfig(input: Partial<CodexRuntimeConfig> & { projectIn
     projectInstanceId: input.projectInstanceId.trim(),
     command: input.command?.trim() || 'codex',
     args: input.args ?? ['app-server'],
-    cwd: input.cwd?.trim() || undefined,
+    cwd: resolvePathLikeInput(input.cwd),
     serviceName: input.serviceName?.trim() || 'codex-bridge',
     transport,
     websocketUrl: transport === 'stdio' ? undefined : input.websocketUrl?.trim() || 'ws://127.0.0.1:4000',
@@ -103,7 +126,7 @@ function parseProjectConfigs(value: string | undefined): CodexRuntimeConfig[] | 
       projectInstanceId: record.projectInstanceId,
       command: record.command?.trim() || 'codex',
       args: Array.isArray(record.args) ? record.args : ['app-server'],
-      cwd: record.cwd?.trim() || undefined,
+      cwd: resolvePathLikeInput(record.cwd),
       serviceName: record.serviceName?.trim() || 'codex-bridge',
       transport: record.transport ?? 'websocket',
       websocketUrl:
@@ -132,7 +155,7 @@ export function resolveCodexRuntimeConfigs(env: RuntimeEnvCodexConfig = process.
       projectInstanceId,
       command: env.BRIDGE_CODEX_COMMAND?.trim() || 'codex',
       args: parseArgs(env.BRIDGE_CODEX_ARGS_JSON),
-      cwd: env.BRIDGE_CODEX_CWD?.trim() || undefined,
+      cwd: resolvePathLikeInput(env.BRIDGE_CODEX_CWD, env.HOME ?? process.env.HOME),
       serviceName: env.BRIDGE_CODEX_SERVICE_NAME?.trim() || 'codex-bridge',
       transport: env.BRIDGE_CODEX_TRANSPORT?.trim() === 'stdio' ? 'stdio' : 'websocket',
       websocketUrl: resolveWebSocketUrl(env),
@@ -157,7 +180,7 @@ export function createCodexRuntimeConfig(input: {
     projectInstanceId: input.projectInstanceId.trim(),
     command: input.command?.trim() || 'codex',
     args: input.args ?? ['app-server'],
-    cwd: input.cwd?.trim() || undefined,
+    cwd: resolvePathLikeInput(input.cwd),
     serviceName: input.serviceName?.trim() || 'codex-bridge',
     transport: input.transport ?? 'websocket',
     websocketUrl:

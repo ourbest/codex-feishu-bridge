@@ -136,6 +136,31 @@ test('loads stdio project configs from projects file shape', () => {
   rmSync(tempDir, { recursive: true, force: true });
 });
 
+test('expands tilde cwd values from project config files', () => {
+  assert.deepEqual(
+    resolveCodexRuntimeConfigs({
+      BRIDGE_CODEX_PROJECTS_JSON: JSON.stringify([
+        {
+          projectInstanceId: 'project-a',
+          cwd: '~/xiaoan-source/deploy',
+        },
+      ]),
+      HOME: '/Users/yonghui',
+    }),
+    [
+      {
+        projectInstanceId: 'project-a',
+        command: 'codex',
+        args: ['app-server'],
+        cwd: '/Users/yonghui/xiaoan-source/deploy',
+        serviceName: 'codex-bridge',
+        transport: 'websocket',
+        websocketUrl: 'ws://127.0.0.1:4000',
+      },
+    ],
+  );
+});
+
 test('keeps the last valid projects snapshot when reload encounters invalid json', async () => {
   const tempDir = mkdtempSync(join(tmpdir(), 'codex-bridge-projects-'));
   const filePath = join(tempDir, 'projects.json');

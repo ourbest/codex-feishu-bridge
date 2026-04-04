@@ -20,3 +20,18 @@ test('resolves the default project-a console config', () => {
     },
   );
 });
+
+test('expands tilde cwd values for console mode', () => {
+  assert.deepEqual(
+    resolveConsoleRuntimeConfig({
+      BRIDGE_CONSOLE: '1',
+      BRIDGE_CODEX_CWD: '~/git/codex-bridge',
+      HOME: '/Users/yonghui',
+    }),
+    {
+      enabled: true,
+      projectInstanceId: 'project-a',
+      cwd: '/Users/yonghui/git/codex-bridge',
+    },
+  );
+});
