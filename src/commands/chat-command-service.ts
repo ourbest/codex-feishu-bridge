@@ -28,6 +28,7 @@ export interface ChatCommandServiceDependencies {
   bindingService: BindingService;
   projectRegistry: {
     describeProject(projectInstanceId: string): Promise<ProjectState>;
+    getProjectConfig?(projectInstanceId: string): { cwd?: string | null } | null;
     getLastThread?(projectInstanceId: string, sessionId: string): Promise<string | null>;
     resumeThread?(projectInstanceId: string, threadId: string): Promise<string>;
   };
@@ -323,13 +324,19 @@ export function createChatCommandService(dependencies: ChatCommandServiceDepende
         return resolved.lines;
       }
 
+      const projectConfig = dependencies.projectRegistry.getProjectConfig?.(projectId);
+      const params =
+        resolved.method === 'thread/list' && projectConfig?.cwd !== undefined
+          ? { ...resolved.params, cwd: projectConfig.cwd }
+          : resolved.params;
+
       if (dependencies.executeStructuredCodexCommand !== undefined) {
         return await dependencies.executeStructuredCodexCommand({
           sessionId: input.sessionId,
           senderId: input.senderId,
           projectInstanceId: projectId,
           method: resolved.method,
-          params: resolved.params,
+          params,
         });
       }
 

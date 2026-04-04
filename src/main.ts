@@ -58,6 +58,10 @@ export async function run(): Promise<void> {
         }
         return projectRegistryImpl.describeProject(projectInstanceId);
       },
+      getProjectConfig(projectInstanceId: string) {
+        const entry = projectConfigEntries.find((p) => p.projectInstanceId === projectInstanceId);
+        return entry ?? null;
+      },
     },
     reloadProjects: async () => {
       if (reloadProjectsHandler === null) {

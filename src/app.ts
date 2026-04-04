@@ -11,6 +11,7 @@ import type { LarkTransport } from './adapters/lark/adapter.ts';
 import type { BindingStore } from './storage/binding-store.ts';
 import type { ProjectState } from './runtime/project-registry.ts';
 import type { ApprovalService } from './runtime/approval-service.ts';
+import type { ProjectConfig } from './runtime/project-registry.ts';
 
 const BUSY_REACTION_EMOJI_TYPE = 'THUMBSUP';
 
@@ -34,6 +35,7 @@ export function createBridgeApp(options: {
   consoleHandler?: MessageHandler;
   projectRegistry: {
     describeProject(projectInstanceId: string): Promise<ProjectState>;
+    getProjectConfig?(projectInstanceId: string): ProjectConfig | null;
   };
   approvalService?: ApprovalService;
   reloadProjects?: () => Promise<string[]>;

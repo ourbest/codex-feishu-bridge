@@ -450,6 +450,67 @@ test('translates session/list to the current app-server thread/list method', asy
   assert.deepEqual(lines, ['[codex-bridge] codex ok']);
 });
 
+test('injects the bound project cwd into thread/list requests', async () => {
+  const bindingService = createBindingService();
+  const registry = createProjectRegistry({
+    getProjectConfig: (projectInstanceId) =>
+      projectInstanceId === 'project-a'
+        ? { projectInstanceId: 'project-a', websocketUrl: 'ws://localhost:4000', cwd: '/repo/project-a' }
+        : null,
+    createClient: () => ({
+      async generateReply() {
+        return 'reply';
+      },
+      async stop() {},
+    }),
+  });
+  const calls: Array<{
+    sessionId: string;
+    senderId: string;
+    projectInstanceId: string;
+    method: string;
+    params: Record<string, unknown>;
+  }> = [];
+
+  await bindingService.bindProjectToSession('project-a', 'chat-a');
+  await registry.onBindingChanged({ type: 'bound', projectId: 'project-a', sessionId: 'chat-a' });
+
+  const service = createChatCommandService({
+    bindingService,
+    projectRegistry: {
+      ...registry,
+      getProjectConfig(projectInstanceId: string) {
+        return projectInstanceId === 'project-a'
+          ? { projectInstanceId: 'project-a', websocketUrl: 'ws://localhost:4000', cwd: '/repo/project-a' }
+          : null;
+      },
+    },
+    executeStructuredCodexCommand: async (input) => {
+      calls.push(input);
+      return ['[codex-bridge] codex ok'];
+    },
+  });
+
+  const lines = await service.execute({
+    sessionId: 'chat-a',
+    senderId: 'user-a',
+    text: 'thread/list',
+  });
+
+  assert.deepEqual(calls, [
+    {
+      sessionId: 'chat-a',
+      senderId: 'user-a',
+      projectInstanceId: 'project-a',
+      method: 'thread/list',
+      params: {
+        cwd: '/repo/project-a',
+      },
+    },
+  ]);
+  assert.deepEqual(lines, ['[codex-bridge] codex ok']);
+});
+
 test('rejects unsupported codex commands before they reach the executor', async () => {
   const bindingService = createBindingService();
   const registry = createProjectRegistry({
