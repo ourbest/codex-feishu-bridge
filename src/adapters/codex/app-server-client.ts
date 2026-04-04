@@ -177,12 +177,21 @@ export class CodexAppServerClient {
     } else {
       const spawnAppServer =
         this.options.spawnAppServer ??
-        ((command, args, options) => spawn(command, args, { cwd: options.cwd, env: options.env, stdio: 'pipe' }) as ChildProcessWithoutNullStreams);
+        ((command, args, options) =>
+          spawn(command, args, {
+            cwd: options.cwd,
+            env: options.env,
+            stdio: 'pipe',
+          }) as ChildProcessWithoutNullStreams);
 
       const args = this.buildArgs('stdio', null);
+      const env = {
+        ...process.env,
+        ...this.options.env,
+      };
       const spawned = spawnAppServer(this.options.command, args, {
         cwd: this.options.cwd,
-        env: this.options.env,
+        env,
       });
 
       this.process = spawned;

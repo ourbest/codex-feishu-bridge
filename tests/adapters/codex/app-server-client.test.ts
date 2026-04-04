@@ -390,3 +390,46 @@ test('rejects when the app-server process fails to spawn', async () => {
     /spawn codex ENOENT/,
   );
 });
+
+test('inherits the current environment when spawning codex app-server', async () => {
+  const stdout = new PassThrough();
+  const receivedEnvs: Array<NodeJS.ProcessEnv | undefined> = [];
+
+  const client = new CodexAppServerClient({
+    command: 'codex',
+    args: ['app-server'],
+    clientInfo: {
+      name: 'bridge-test',
+      title: 'Bridge Test',
+      version: '0.1.0',
+    },
+    env: {
+      BRIDGE_TEST_ONLY: 'yes',
+    },
+    spawnAppServer(command, args, options) {
+      receivedEnvs.push(options.env);
+      return {
+        stdin: {
+          write() {
+            return true;
+          },
+        },
+        stdout,
+        stderr: new PassThrough(),
+        kill() {
+          return true;
+        },
+        on() {
+          return undefined;
+        },
+      };
+    },
+  });
+
+  void client.generateReply({ text: 'hello' }).catch(() => {});
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(receivedEnvs.length, 1);
+  assert.equal(receivedEnvs[0]?.BRIDGE_TEST_ONLY, 'yes');
+  assert.equal(receivedEnvs[0]?.PATH, process.env.PATH);
+});

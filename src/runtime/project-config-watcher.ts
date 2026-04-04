@@ -7,6 +7,7 @@ export interface ProjectConfigWatcherOptions {
   filePath: string;
   onProjectsChanged?: (projects: ProjectConfigEntry[]) => void | Promise<void>;
   readProjects?: () => Promise<ProjectConfigEntry[] | null> | ProjectConfigEntry[] | null;
+  watchDirectory?: (directory: string, listener: (eventType: string, changedFilename?: string | Buffer) => void) => FSWatcher;
 }
 
 export interface ProjectConfigWatcher {
@@ -71,13 +72,28 @@ export function createProjectConfigWatcher(options: ProjectConfigWatcherOptions)
     const directory = path.dirname(options.filePath);
     const filename = path.basename(options.filePath);
 
-    fileWatcher = watch(directory, { persistent: false }, (_eventType, changedFilename) => {
-      if (changedFilename !== undefined && changedFilename !== filename) {
-        return;
-      }
+    try {
+      fileWatcher = (options.watchDirectory ?? ((dir, listener) => watch(dir, { persistent: false }, listener)))(directory, (_eventType, changedFilename) => {
+        if (changedFilename !== undefined && changedFilename !== filename) {
+          return;
+        }
 
-      void reload();
-    });
+        void reload();
+      });
+      fileWatcher.on('error', (error) => {
+        const code = typeof error === 'object' && error !== null ? (error as { code?: string }).code : undefined;
+        if (fileWatcher !== null) {
+          fileWatcher.close();
+          fileWatcher = null;
+        }
+
+        console.warn(`[codex-bridge] project config watcher unavailable (${code ?? 'unknown'}); continuing without live reload`);
+      });
+    } catch (error) {
+      const code = typeof error === 'object' && error !== null ? (error as { code?: string }).code : undefined;
+      fileWatcher = null;
+      console.warn(`[codex-bridge] project config watcher unavailable (${code}); continuing without live reload`);
+    }
   }
 
   async function stop(): Promise<void> {

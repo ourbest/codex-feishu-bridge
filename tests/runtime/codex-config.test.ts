@@ -190,6 +190,43 @@ test('can start a projects watcher even when the file does not exist yet', async
   rmSync(tempDir, { recursive: true, force: true });
 });
 
+test('continues when file watching is unavailable', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'codex-bridge-projects-'));
+  const filePath = join(tempDir, 'projects.json');
+  let errorListener: ((error: Error) => void) | null = null;
+
+  const watcher = createProjectConfigWatcher({
+    filePath,
+    watchDirectory() {
+      return {
+        close() {
+          return this;
+        },
+        on(event: 'error', listener: (error: Error) => void) {
+          if (event === 'error') {
+            errorListener = listener;
+          }
+          return this;
+        },
+      } as unknown as import('node:fs').FSWatcher;
+    },
+  });
+
+  await watcher.start();
+  queueMicrotask(() => {
+    const error = new Error('too many open files');
+    (error as { code?: string }).code = 'EMFILE';
+    errorListener?.(error);
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  await watcher.reload();
+  await watcher.stop();
+
+  assert.deepEqual(watcher.getProjects(), []);
+
+  rmSync(tempDir, { recursive: true, force: true });
+});
+
 test('serializes watcher reload publications so stale snapshots do not win', async () => {
   const firstSnapshot = [{ projectInstanceId: 'project-a', transport: 'stdio' as const, cwd: '/one' }];
   const secondSnapshot = [{ projectInstanceId: 'project-a', transport: 'stdio' as const, cwd: '/two' }];
