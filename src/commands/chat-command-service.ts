@@ -44,7 +44,7 @@ export interface ChatCommandService {
 }
 
 function isBridgeCommandToken(token: string): boolean {
-  return token === 'bind' || token === 'unbind' || token === 'list' || token === 'help' || token === 'sessions' || token === 'reload' || token === 'resume' || token === 'new';
+  return token === 'bind' || token === 'unbind' || token === 'list' || token === 'help' || token === 'sessions' || token === 'restart' || token === 'reload' || token === 'resume' || token === 'new';
 }
 
 function isCodexCommandToken(token: string): boolean {
@@ -87,6 +87,7 @@ function buildHelpLines(): string[] {
     '  //list              - show current binding',
     '  //new               - start a new codex thread for this chat',
     '  //sessions          - show bridge and codex state',
+    '  //restart           - restart the bridge process',
     '  //reload projects   - reload projects.json',
     '  //resume <threadId|last> - resume a codex thread (threadId comes from thread/list)',
     '  //approvals         - list pending approval requests',
@@ -311,6 +312,9 @@ export function createChatCommandService(dependencies: ChatCommandServiceDepende
               input.sessionId,
               input.senderId,
             );
+
+          case 'restart':
+            return ['[codex-bridge] restarting bridge process...'];
 
           case 'resume': {
             if (parsed.args.length !== 1) {

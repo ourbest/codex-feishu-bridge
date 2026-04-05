@@ -38,6 +38,7 @@ export async function run(): Promise<void> {
   let reloadProjectsHandler: (() => Promise<string[]>) | null = null;
   let projectConfigEntries: ProjectConfigEntry[] = loadProjectsFromFile(projectsFilePath) ?? [];
   let app: ReturnType<typeof createBridgeApp> | null = null;
+  let restartInFlight = false;
 
   const { transport, sendToOpenId, sendCardToOpenId } = feishuRuntime !== null && feishuRuntime.wsEnabled
     ? await createFeishuWebSocketTransportFromRuntime(feishuRuntime)
@@ -57,6 +58,26 @@ export async function run(): Promise<void> {
     approvalService,
     onInboundMessage: (message) => {
       latestInboundMessageIdBySession.set(message.sessionId, message.messageId);
+    },
+    onRestartRequested: async ({ sessionId, senderId }) => {
+      if (restartInFlight) {
+        await app?.larkAdapter.send({
+          targetSessionId: sessionId,
+          text: '[codex-bridge] restart already in progress',
+        });
+        return;
+      }
+
+      restartInFlight = true;
+      console.log(`[codex-bridge] restart requested by ${senderId} in ${sessionId}`);
+
+      try {
+        await app?.stop();
+        await closeServer(app?.apiServer ?? null);
+        await projectConfigWatcher?.stop();
+      } finally {
+        process.exit(0);
+      }
     },
     projectRegistry: {
       async describeProject(projectInstanceId: string) {
@@ -397,6 +418,22 @@ export async function run(): Promise<void> {
   });
   process.once('SIGTERM', () => {
     void shutdown();
+  });
+}
+
+async function closeServer(server: ReturnType<typeof createBridgeApp>['apiServer'] | null): Promise<void> {
+  if (server === null) {
+    return;
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    server.close((error?: Error) => {
+      if (error !== undefined) {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
   });
 }
 

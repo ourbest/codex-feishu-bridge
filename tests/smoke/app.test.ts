@@ -101,6 +101,7 @@ test('boots the bridge runtime and forwards a routed reply back to lark', async 
 
 test('handles //sessions using the supplied project registry', async () => {
   const sentMessages: Array<{ sessionId: string; text: string }> = [];
+  const sentCards: Array<{ sessionId: string; card: { msg_type: 'interactive'; content: string }; fallbackText?: string }> = [];
   const reactions: Array<{ targetMessageId: string; emojiType: string }> = [];
   let eventHandler: ((event: LarkEventPayload) => Promise<void> | void) | null = null;
 
@@ -110,6 +111,9 @@ test('handles //sessions using the supplied project registry', async () => {
     },
     async sendMessage(message) {
       sentMessages.push(message);
+    },
+    async sendCard(message) {
+      sentCards.push(message);
     },
     async sendReaction(message) {
       reactions.push(message);
@@ -151,21 +155,187 @@ test('handles //sessions using the supplied project registry', async () => {
       emojiType: 'THUMBSUP',
     },
   ]);
+  assert.deepEqual(sentMessages, []);
+  assert.equal(sentCards.length, 1);
+  assert.equal(sentCards[0]?.sessionId, 'session-a');
+  assert.match(sentCards[0]?.fallbackText ?? '', /\[codex-bridge\] Bridge State:/);
+  const card = JSON.parse(sentCards[0]?.card.content ?? '{}') as {
+    header?: { title?: { content?: string } };
+    body?: { elements?: Array<{ tag?: string; content?: string }> };
+  };
+  assert.equal(card.header?.title?.content, 'Session State');
+  assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('chatId: session-a')));
+
+  await app.stop();
+});
+
+test('renders codex query command results as interactive cards', async () => {
+  const sentMessages: Array<{ sessionId: string; text: string }> = [];
+  const sentCards: Array<{ sessionId: string; card: { msg_type: 'interactive'; content: string }; fallbackText?: string }> = [];
+  const reactions: Array<{ targetMessageId: string; emojiType: string }> = [];
+  let eventHandler: ((event: LarkEventPayload) => Promise<void> | void) | null = null;
+
+  const transport: LarkTransport = {
+    onEvent(handler) {
+      eventHandler = handler;
+    },
+    async sendMessage(message) {
+      sentMessages.push(message);
+    },
+    async sendCard(message) {
+      sentCards.push(message);
+    },
+    async sendReaction(message) {
+      reactions.push(message);
+    },
+  };
+
+  const app = createBridgeApp({
+    config: loadConfig({}),
+    larkTransport: transport,
+    projectRegistry: {
+      async describeProject(projectInstanceId) {
+        return {
+          projectInstanceId,
+          configured: true,
+          active: true,
+          removed: false,
+          sessionCount: 1,
+        };
+      },
+      getProjectConfig(projectInstanceId) {
+        return {
+          projectInstanceId,
+          cwd: '/repo/project-a',
+          transport: 'stdio',
+          command: 'codex',
+          args: ['app-server'],
+        };
+      },
+    },
+    executeStructuredCodexCommand: async ({ method }) => {
+      if (method === 'app/list') {
+        return [
+          '[codex-bridge] app/list: 1 item(s)',
+          '1. shell',
+          '   title: Shell',
+        ];
+      }
+
+      return [
+        '[codex-bridge] thread/read',
+        'id: thr_123',
+        'preview: hello world',
+      ];
+    },
+  });
+
+  await app.bindingService.bindProjectToSession('project-a', 'session-a');
+  await app.start();
+  assert.ok(eventHandler);
+
+  await eventHandler!({
+    sessionId: 'session-a',
+    messageId: 'message-app-list',
+    text: 'app/list',
+    senderId: 'user-a',
+    timestamp: '2026-03-29T00:00:00.000Z',
+  });
+
+  await eventHandler!({
+    sessionId: 'session-a',
+    messageId: 'message-thread-read',
+    text: 'thread/read thr_123',
+    senderId: 'user-a',
+    timestamp: '2026-03-29T00:00:01.000Z',
+  });
+
+  assert.deepEqual(sentMessages, []);
+  assert.equal(sentCards.length, 2);
+  assert.match(sentCards[0]?.fallbackText ?? '', /\[codex-bridge\] app\/list: 1 item\(s\)/);
+  assert.match(sentCards[1]?.fallbackText ?? '', /\[codex-bridge\] thread\/read/);
+
+  const firstCard = JSON.parse(sentCards[0]?.card.content ?? '{}') as {
+    header?: { title?: { content?: string } };
+    body?: { elements?: Array<{ tag?: string; content?: string }> };
+  };
+  assert.equal(firstCard.header?.title?.content, 'app/list');
+  assert.ok(firstCard.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('1. shell')));
+
+  const secondCard = JSON.parse(sentCards[1]?.card.content ?? '{}') as {
+    header?: { title?: { content?: string } };
+    body?: { elements?: Array<{ tag?: string; content?: string }> };
+  };
+  assert.equal(secondCard.header?.title?.content, 'thread/read');
+  assert.ok(secondCard.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('id: thr_123')));
+
+  await app.stop();
+});
+
+test('acknowledges //restart before invoking the restart callback', async () => {
+  const sentMessages: Array<{ sessionId: string; text: string }> = [];
+  const reactions: Array<{ targetMessageId: string; emojiType: string }> = [];
+  const steps: string[] = [];
+  let eventHandler: ((event: LarkEventPayload) => Promise<void> | void) | null = null;
+
+  const transport: LarkTransport = {
+    onEvent(handler) {
+      eventHandler = handler;
+    },
+    async sendMessage(message) {
+      sentMessages.push(message);
+      steps.push(`send:${message.text}`);
+    },
+    async sendReaction(message) {
+      reactions.push(message);
+    },
+  };
+
+  const app = createBridgeApp({
+    config: loadConfig({}),
+    larkTransport: transport,
+    onRestartRequested: async () => {
+      steps.push('restart');
+    },
+    projectRegistry: {
+      async describeProject(projectInstanceId) {
+        return {
+          projectInstanceId,
+          configured: false,
+          active: false,
+          removed: false,
+          sessionCount: 0,
+        };
+      },
+    },
+  });
+
+  await app.start();
+  assert.ok(eventHandler);
+
+  await eventHandler!({
+    sessionId: 'session-restart',
+    messageId: 'message-restart',
+    text: '//restart',
+    senderId: 'user-restart',
+    timestamp: '2026-03-29T00:00:00.000Z',
+  });
+
+  assert.deepEqual(reactions, [
+    {
+      targetMessageId: 'message-restart',
+      emojiType: 'THUMBSUP',
+    },
+  ]);
   assert.deepEqual(sentMessages, [
     {
-      sessionId: 'session-a',
-      text: [
-        '[codex-bridge] Bridge State:',
-        '  chatId: session-a',
-        '  senderId: user-a',
-        '  projectId: project-a',
-        '[codex-bridge] Codex State:',
-        '  projectId: project-a',
-        '  configured: yes',
-        '  active: no',
-        '  removed: no',
-      ].join('\n'),
+      sessionId: 'session-restart',
+      text: '[codex-bridge] restarting bridge process...',
     },
+  ]);
+  assert.deepEqual(steps, [
+    'send:[codex-bridge] restarting bridge process...',
+    'restart',
   ]);
 
   await app.stop();
@@ -335,6 +505,7 @@ test('handles //reload projects by reloading a real projects file and reconcilin
   );
 
   const sentMessages: Array<{ sessionId: string; text: string }> = [];
+  const sentCards: Array<{ sessionId: string; card: { msg_type: 'interactive'; content: string }; fallbackText?: string }> = [];
   const reactions: Array<{ targetMessageId: string; emojiType: string }> = [];
   let eventHandler: ((event: LarkEventPayload) => Promise<void> | void) | null = null;
   const projectConfigs: Array<{ projectInstanceId: string; websocketUrl: string }> = [];
@@ -361,6 +532,9 @@ test('handles //reload projects by reloading a real projects file and reconcilin
     },
     async sendMessage(message) {
       sentMessages.push(message);
+    },
+    async sendCard(message) {
+      sentCards.push(message);
     },
     async sendReaction(message) {
       reactions.push(message);
@@ -429,17 +603,9 @@ test('handles //reload projects by reloading a real projects file and reconcilin
     timestamp: '2026-03-29T00:00:01.000Z',
   });
 
-  assert.equal(sentMessages[1]?.text, [
-    '[codex-bridge] Bridge State:',
-    '  chatId: session-a',
-    '  senderId: user-a',
-    '  projectId: project-a',
-    '[codex-bridge] Codex State:',
-    '  projectId: project-a',
-    '  configured: yes',
-    '  active: no',
-    '  removed: no',
-  ].join('\n'));
+  assert.equal(sentMessages[1]?.text, undefined);
+  assert.equal(sentCards.length, 1);
+  assert.match(sentCards[0]?.fallbackText ?? '', /\[codex-bridge\] Bridge State:/);
 
   await app.stop();
   rmSync(tempDir, { recursive: true, force: true });

@@ -12,7 +12,7 @@ import type { BindingStore } from './storage/binding-store.ts';
 import type { ProjectState } from './runtime/project-registry.ts';
 import type { ApprovalService } from './runtime/approval-service.ts';
 import type { ProjectConfig } from './runtime/project-registry.ts';
-import { buildHelpCard, buildProjectReplyCard, buildUnboundCard } from './adapters/lark/cards.ts';
+import { buildCommandResultCard, buildHelpCard, buildProjectReplyCard, buildUnboundCard } from './adapters/lark/cards.ts';
 
 const BUSY_REACTION_EMOJI_TYPE = 'THUMBSUP';
 
@@ -58,12 +58,32 @@ function isHelpCommand(text: string): boolean {
   return normalized === '//help' || normalized === 'help';
 }
 
+function isRestartCommand(text: string): boolean {
+  const normalized = text.trim().toLowerCase();
+  return normalized === '//restart' || normalized === 'restart';
+}
+
+function readCommandCardTitle(text: string): string | null {
+  const normalized = text.trim().toLowerCase();
+  if (normalized === '//sessions' || normalized === 'sessions') {
+    return 'Session State';
+  }
+
+  const command = normalized.startsWith('//') ? normalized.slice(2).trim().split(/\s+/)[0] : normalized.split(/\s+/)[0];
+  if (command === 'app/list' || command === 'session/list' || command === 'session/get' || command === 'thread/list' || command === 'thread/get' || command === 'thread/read') {
+    return command;
+  }
+
+  return null;
+}
+
 export function createBridgeApp(options: {
   config: BridgeConfig;
   larkTransport: LarkTransport;
   bindingStore?: BindingStore;
   onInboundMessage?: (message: { sessionId: string; messageId: string; senderId: string; text: string }) => void;
   consoleHandler?: MessageHandler;
+  onRestartRequested?: (input: { sessionId: string; senderId: string; messageId: string; text: string }) => Promise<void>;
   projectRegistry: {
     describeProject(projectInstanceId: string): Promise<ProjectState>;
     getProjectConfig?(projectInstanceId: string): ProjectConfig | null;
@@ -150,10 +170,44 @@ export function createBridgeApp(options: {
         return;
       }
 
+      const commandCardTitle = readCommandCardTitle(text);
+      if (commandCardTitle !== null) {
+        const projectId = await bindingService.getProjectBySession(message.sessionId);
+        const projectConfig = projectId === null ? null : options.projectRegistry.getProjectConfig?.(projectId) ?? null;
+        const footerItems =
+          projectId === null
+            ? []
+            : [
+                { label: 'Project', value: projectId },
+                { label: 'PATH', value: projectConfig?.cwd ?? 'n/a' },
+                { label: 'Transport', value: projectConfig?.transport ?? 'n/a' },
+              ];
+
+        await larkAdapter.sendCard({
+          targetSessionId: message.sessionId,
+          card: buildCommandResultCard({
+            title: commandCardTitle,
+            lines: commandLines,
+            footerItems,
+          }),
+          fallbackText: commandLines.join('\n'),
+        });
+        return;
+      }
+
       await larkAdapter.send({
         targetSessionId: message.sessionId,
         text: commandLines.join('\n'),
       });
+
+      if (isRestartCommand(text)) {
+        await options.onRestartRequested?.({
+          sessionId: message.sessionId,
+          senderId: message.senderId,
+          messageId: message.messageId,
+          text,
+        });
+      }
       return;
     }
 

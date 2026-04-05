@@ -95,6 +95,47 @@ export function buildProjectReplyCard(input: {
   });
 }
 
+function buildCodeBlockMarkdown(lines: string[]): string {
+  const sanitizedLines = lines.map((line) => line.replaceAll('```', '``\\`'));
+  return ['```text', ...sanitizedLines, '```'].join('\n');
+}
+
+export function buildCommandResultCard(input: {
+  title: string;
+  lines: string[];
+  footerItems?: CardFooterItem[];
+  subtitle?: string;
+}): FeishuInteractiveCardMessage {
+  const elements: Array<Record<string, unknown>> = [
+    {
+      tag: 'markdown',
+      content: buildCodeBlockMarkdown(input.lines),
+    },
+  ];
+
+  if (input.footerItems !== undefined && input.footerItems.length > 0) {
+    elements.push({ tag: 'hr' });
+    elements.push(buildFooterMarkdown(input.footerItems));
+  }
+
+  return buildInteractiveCardMessage({
+    schema: '2.0',
+    config: {
+      enable_forward: true,
+      update_multi: true,
+      width_mode: 'fill',
+    },
+    header: {
+      template: 'grey',
+      title: plainText(input.title),
+      subtitle: input.subtitle ? plainText(input.subtitle) : undefined,
+    },
+    body: {
+      elements,
+    },
+  });
+}
+
 export function buildApprovalCard(input: {
   title: string;
   subtitle?: string;

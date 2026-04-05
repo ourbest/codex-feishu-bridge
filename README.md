@@ -33,6 +33,26 @@ Run the bridge with the default local dev transport:
 
 The HTTP API listens on `http://127.0.0.1:3000` by default.
 
+## Run with pm2
+
+For production-style runs, manage the bridge with pm2:
+
+```bash
+pm2 start ecosystem.config.cjs
+pm2 logs codex-bridge
+pm2 save
+```
+
+Useful lifecycle commands:
+
+```bash
+pm2 restart codex-bridge
+pm2 stop codex-bridge
+pm2 delete codex-bridge
+```
+
+The bundled [ecosystem.config.cjs](/Users/yonghui/git/codex-bridge/ecosystem.config.cjs) starts the bridge via `npm start`, loads `.env`, and enables automatic restart. The in-chat `//restart` command now exits the process with code `0`, and pm2 is expected to start a fresh bridge process immediately.
+
 ## Bind a project to a chat
 
 ```bash
@@ -57,16 +77,19 @@ In Feishu/Lark chats, the bridge understands these commands:
 //unbind
 //list
 //sessions
+//restart
 //reload projects
 //resume <threadId|last>
 //help
 app/list
 session/list
 session/get <id>
-thread/get <id>
+thread/list
+thread/start
+thread/read <id>
 ```
 
-`//sessions` shows the bridge binding plus the current Codex project state. `//reload projects` reloads `projects.json` immediately, which is useful after editing the project list on disk. `//resume <threadId|last>` resumes a Codex thread for the current chat and project. The supported Codex passthrough commands are exactly `app/list`, `session/list`, `session/get <id>`, and `thread/get <id>`.
+`//sessions` shows the bridge binding plus the current Codex project state. `//restart` exits the current bridge process and relies on pm2 to start it again. `//reload projects` reloads `projects.json` immediately, which is useful after editing the project list on disk. `//resume <threadId|last>` resumes a Codex thread for the current chat and project. The supported Codex passthrough commands are `app/list`, `session/list`, `session/get <id>`, `thread/list`, `thread/start`, and `thread/read <id>`.
 
 ## Run Codex in background mode
 
