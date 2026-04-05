@@ -355,6 +355,32 @@ test('returns an acknowledgement for //restart', async () => {
   assert.deepEqual(lines, ['[codex-bridge] restarting bridge process...']);
 });
 
+test('shows //read in help output', async () => {
+  const bindingService = createBindingService();
+  const registry = createProjectRegistry({
+    getProjectConfig: () => null,
+    createClient: () => ({
+      async generateReply() {
+        return 'reply';
+      },
+      async stop() {},
+    }),
+  });
+
+  const service = createChatCommandService({
+    bindingService,
+    projectRegistry: registry,
+  });
+
+  const lines = await service.execute({
+    sessionId: 'chat-a',
+    senderId: 'user-a',
+    text: '//help',
+  });
+
+  assert.ok(lines?.includes('  //read <path>       - read a project file as a card'));
+});
+
 test('routes bare codex commands through the executor when bound', async () => {
   const bindingService = createBindingService();
   const registry = createProjectRegistry({
@@ -654,6 +680,7 @@ test('rejects unsupported codex commands before they reach the executor', async 
     '  //list              - show current binding',
     '  //new               - start a new codex thread for this chat',
     '  //sessions          - show bridge and codex state',
+    '  //read <path>       - read a project file as a card',
     '  //restart           - restart the bridge process',
     '  //reload projects   - reload projects.json',
     '  //resume <threadId|last> - resume a codex thread (threadId comes from thread/list)',
@@ -702,6 +729,7 @@ test('returns an error for unknown // commands instead of falling through', asyn
     '  //list              - show current binding',
     '  //new               - start a new codex thread for this chat',
     '  //sessions          - show bridge and codex state',
+    '  //read <path>       - read a project file as a card',
     '  //restart           - restart the bridge process',
     '  //reload projects   - reload projects.json',
     '  //resume <threadId|last> - resume a codex thread (threadId comes from thread/list)',

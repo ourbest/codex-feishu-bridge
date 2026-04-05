@@ -95,6 +95,43 @@ export function buildProjectReplyCard(input: {
   });
 }
 
+export function buildMarkdownContentCard(input: {
+  title: string;
+  bodyMarkdown: string;
+  footerItems?: CardFooterItem[];
+  subtitle?: string;
+  template?: 'blue' | 'turquoise' | 'green' | 'yellow' | 'red' | 'grey';
+}): FeishuInteractiveCardMessage {
+  const elements: Array<Record<string, unknown>> = [
+    {
+      tag: 'markdown',
+      content: input.bodyMarkdown,
+    },
+  ];
+
+  if (input.footerItems !== undefined && input.footerItems.length > 0) {
+    elements.push({ tag: 'hr' });
+    elements.push(buildFooterMarkdown(input.footerItems));
+  }
+
+  return buildInteractiveCardMessage({
+    schema: '2.0',
+    config: {
+      enable_forward: true,
+      update_multi: true,
+      width_mode: 'fill',
+    },
+    header: {
+      template: input.template ?? 'blue',
+      title: plainText(input.title),
+      subtitle: input.subtitle ? plainText(input.subtitle) : undefined,
+    },
+    body: {
+      elements,
+    },
+  });
+}
+
 function buildCodeBlockMarkdown(lines: string[]): string {
   const sanitizedLines = lines.map((line) => line.replaceAll('```', '``\\`'));
   return ['```text', ...sanitizedLines, '```'].join('\n');

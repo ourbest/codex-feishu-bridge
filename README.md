@@ -1,19 +1,20 @@
 # codex-bridge
 
-Bridge service for connecting Codex project instances to IM sessions.
+Bridge service for connecting Codex project instances to Feishu/Lark chats.
 
-## What it does
+## Overview
 
 - Manages one-to-one bindings between `projectInstanceId` and `chatId`
 - Routes inbound IM messages to the bound Codex project
-- Sends Codex replies back to the original IM session
-- Supports a thin `openclaw-lite` plugin runtime for Feishu-style channels
-- Supports Codex app-server over `websocket`
+- Sends Codex replies, command results, and approval prompts back to the originating chat
+- Supports both local dev transport and real Feishu WebSocket transport
+- Connects to Codex projects lazily from `projects.json`
 
 ## Requirements
 
 - Node.js 24
-- `codex` available locally if you want to run a real Codex app-server
+- `codex` available locally if you want to run Codex app-server projects
+- `pm2` if you want process supervision and in-chat `//restart`
 
 ## Scripts
 
@@ -23,15 +24,66 @@ npm run dev
 npm start
 ```
 
-## Start the bridge
+## Quick Start
 
-Run the bridge with the default local dev transport:
+1. Copy [projects.json.example](/Users/yonghui/git/codex-bridge/projects.json.example) to `projects.json` and edit the project entries.
+2. Add a `.env` file if you want Feishu WebSocket transport.
+3. Start the bridge:
 
 ```bash
-/Users/yonghui/.nvm/versions/node/v24.0.2/bin/node --experimental-strip-types src/main.ts
+npm start
 ```
 
-The HTTP API listens on `http://127.0.0.1:3000` by default.
+By default the bridge listens on `http://127.0.0.1:3000` and stores bindings in `./data/bridge.json`.
+
+## Project Configuration
+
+The bridge loads available Codex projects from `projects.json` or `BRIDGE_PROJECTS_FILE`.
+
+Example:
+
+```json
+{
+  "projects": [
+    {
+      "projectInstanceId": "project-a",
+      "command": "codex",
+      "args": ["app-server"],
+      "cwd": "/absolute/path/to/project-a",
+      "serviceName": "project-a",
+      "transport": "stdio"
+    }
+  ]
+}
+```
+
+Supported fields:
+
+- `projectInstanceId`
+- `command`
+- `args`
+- `cwd`
+- `serviceName`
+- `transport`: `stdio` or `websocket`
+- `websocketUrl`: only used for `websocket`
+
+## Transport Modes
+
+### Local Dev
+
+If `BRIDGE_FEISHU_WS_ENABLED` is not set, the bridge uses the local dev transport and logs outbound messages to stdout.
+
+### Feishu WebSocket
+
+To use the real Feishu transport, set:
+
+```bash
+FEISHU_APP_ID=...
+FEISHU_APP_SECRET=...
+BRIDGE_FEISHU_WS_ENABLED=1
+```
+
+Then start the bridge with `npm start`.
 
 ## Run with pm2
 
@@ -51,7 +103,7 @@ pm2 stop codex-bridge
 pm2 delete codex-bridge
 ```
 
-The bundled [ecosystem.config.cjs](/Users/yonghui/git/codex-bridge/ecosystem.config.cjs) starts the bridge via `npm start`, loads `.env`, and enables automatic restart. The in-chat `//restart` command now exits the process with code `0`, and pm2 is expected to start a fresh bridge process immediately.
+The bundled [ecosystem.config.cjs](/Users/yonghui/git/codex-bridge/ecosystem.config.cjs) starts the bridge via `npm start`, loads `.env`, and enables automatic restart. The in-chat `//restart` command exits the current process with code `0`, and pm2 starts a fresh bridge process immediately.
 
 ## Bind a project to a chat
 
@@ -68,15 +120,16 @@ curl http://127.0.0.1:3000/bindings/project/project-a
 curl http://127.0.0.1:3000/bindings/session/chat-a
 ```
 
-## Chat commands
+## Chat Commands
 
-In Feishu/Lark chats, the bridge understands these commands:
+In Feishu/Lark chats, the bridge understands:
 
 ```text
 //bind <projectId>
 //unbind
 //list
 //sessions
+//read <path>
 //restart
 //reload projects
 //resume <threadId|last>
@@ -89,65 +142,49 @@ thread/start
 thread/read <id>
 ```
 
-`//sessions` shows the bridge binding plus the current Codex project state. `//restart` exits the current bridge process and relies on pm2 to start it again. `//reload projects` reloads `projects.json` immediately, which is useful after editing the project list on disk. `//resume <threadId|last>` resumes a Codex thread for the current chat and project. The supported Codex passthrough commands are `app/list`, `session/list`, `session/get <id>`, `thread/list`, `thread/start`, and `thread/read <id>`.
+Notes:
 
-## Run Codex in background mode
+- `//help`, `//sessions`, `//read`, `app/list`, `session/*`, and `thread/*` render as interactive cards when card transport is available.
+- `//sessions` shows the bridge binding plus current Codex project state.
+- `//read <path>` reads a file under the bound project's `cwd` and returns it as a Markdown card.
+- `//reload projects` reloads `projects.json` immediately.
+- `//resume <threadId|last>` resumes the last or explicit Codex thread for the current chat.
+- `//restart` is intended for pm2-managed runs.
 
-By default the bridge uses Codex app-server over `ws://127.0.0.1:4000`.
+## Console Mode
 
-Start Codex manually in another terminal:
-
-```bash
-codex app-server --listen ws://127.0.0.1:4000
-```
-
-Then start the bridge:
-
-```bash
-BRIDGE_CODEX_PROJECT_INSTANCE_ID=project-a \
-BRIDGE_CODEX_WEBSOCKET_URL=ws://127.0.0.1:4000 \
-/Users/yonghui/.nvm/versions/node/v24.0.2/bin/node --experimental-strip-types src/main.ts
-```
-
-## Console mode
-
-Console mode lets you type into the terminal and see Codex replies inline:
+Console mode lets you talk to one project directly in the terminal:
 
 ```bash
 BRIDGE_CONSOLE=1 \
-BRIDGE_CODEX_PROJECT_INSTANCE_ID=project-a \
-BRIDGE_CODEX_WEBSOCKET_URL=ws://127.0.0.1:4000 \
-/Users/yonghui/.nvm/versions/node/v24.0.2/bin/node --experimental-strip-types src/main.ts
+BRIDGE_CONSOLE_PROJECT_INSTANCE_ID=project-a \
+BRIDGE_CODEX_CWD=/absolute/path/to/project-a \
+npm start
 ```
 
-## openclaw-lite plugin runtime
+## HTTP API
 
-`openclaw-lite` is a thin plugin launcher. It does not call an external OpenClaw gateway.
+- `POST /bindings`
+- `GET /bindings/project/:id`
+- `GET /bindings/session/:id`
+- `DELETE /bindings/project/:id`
+- `DELETE /bindings/session/:id`
+- `GET /health`
 
-Enable the bundled plugin runtime:
+## Key Environment Variables
 
-```bash
-BRIDGE_OPENCLAW_LITE_ENABLED=1 \
-/Users/yonghui/.nvm/versions/node/v24.0.2/bin/node --experimental-strip-types src/main.ts
-```
-
-Or point it at your own plugin process:
-
-```bash
-BRIDGE_OPENCLAW_LITE_PLUGIN_COMMAND=/usr/bin/node \
-BRIDGE_OPENCLAW_LITE_PLUGIN_ARGS_JSON='["--experimental-strip-types","src/channel/feishu-plugin-process.ts"]' \
-/Users/yonghui/.nvm/versions/node/v24.0.2/bin/node --experimental-strip-types src/main.ts
-```
-
-Plugin runtime env variables:
-
-- `BRIDGE_OPENCLAW_LITE_PLUGIN_COMMAND`
-- `BRIDGE_OPENCLAW_LITE_PLUGIN_ARGS_JSON`
-- `BRIDGE_OPENCLAW_LITE_PLUGIN_CWD`
-- `BRIDGE_OPENCLAW_LITE_PLUGIN_ENV_JSON`
-
-## Notes
-
-- `chatId` is the routing key on the bridge side
-- The plugin runtime only forwards `chatId`, `event`, and `status`
-- Rebinding a project replaces the existing session binding
+- `BRIDGE_HOST`
+- `BRIDGE_PORT`
+- `BRIDGE_STORAGE_PATH`
+- `BRIDGE_PROJECTS_FILE`
+- `FEISHU_APP_ID`
+- `FEISHU_APP_SECRET`
+- `BRIDGE_FEISHU_WS_ENABLED`
+- `BRIDGE_CODEX_PROJECTS_JSON`
+- `BRIDGE_CODEX_PROJECT_INSTANCE_ID`
+- `BRIDGE_CODEX_COMMAND`
+- `BRIDGE_CODEX_ARGS_JSON`
+- `BRIDGE_CODEX_CWD`
+- `BRIDGE_CODEX_SERVICE_NAME`
+- `BRIDGE_CODEX_TRANSPORT`
+- `BRIDGE_CODEX_WEBSOCKET_URL`

@@ -1,4 +1,6 @@
+import { readFile } from 'node:fs/promises';
 import type { Server } from 'node:http';
+import path from 'node:path';
 
 import { LarkAdapter } from './adapters/lark/adapter.ts';
 import { createApiServer } from './api/server.ts';
@@ -12,9 +14,10 @@ import type { BindingStore } from './storage/binding-store.ts';
 import type { ProjectState } from './runtime/project-registry.ts';
 import type { ApprovalService } from './runtime/approval-service.ts';
 import type { ProjectConfig } from './runtime/project-registry.ts';
-import { buildCommandResultCard, buildHelpCard, buildProjectReplyCard, buildUnboundCard } from './adapters/lark/cards.ts';
+import { buildCommandResultCard, buildHelpCard, buildMarkdownContentCard, buildProjectReplyCard, buildUnboundCard } from './adapters/lark/cards.ts';
 
 const BUSY_REACTION_EMOJI_TYPE = 'THUMBSUP';
+const MAX_READ_CARD_CHARS = 12000;
 
 export interface BridgeRuntime {
   config: BridgeConfig;
@@ -35,6 +38,7 @@ const HELP_CARD_BRIDGE_COMMANDS = [
   { command: '//list', description: 'Show the current binding.' },
   { command: '//new', description: 'Start a fresh Codex thread for this chat.' },
   { command: '//sessions', description: 'Show bridge and Codex session state.' },
+  { command: '//read <path>', description: 'Read a project file as a Markdown card.' },
   { command: '//reload projects', description: 'Reload the projects.json file.' },
   { command: '//resume <threadId|last>', description: 'Resume a Codex thread for this chat.' },
   { command: '//approvals', description: 'List pending approval requests.' },
@@ -61,6 +65,77 @@ function isHelpCommand(text: string): boolean {
 function isRestartCommand(text: string): boolean {
   const normalized = text.trim().toLowerCase();
   return normalized === '//restart' || normalized === 'restart';
+}
+
+function parseReadCommand(text: string): { kind: 'usage' } | { kind: 'read'; targetPath: string } | null {
+  const match = text.trim().match(/^(?:\/\/)?read(?:\s+(.+))?$/i);
+  if (match === null) {
+    return null;
+  }
+
+  const targetPath = match[1]?.trim();
+  if (targetPath === undefined || targetPath === '') {
+    return { kind: 'usage' };
+  }
+
+  return { kind: 'read', targetPath };
+}
+
+function isPathWithinRoot(rootPath: string, targetPath: string): boolean {
+  const relativePath = path.relative(rootPath, targetPath);
+  return relativePath === '' || (!relativePath.startsWith('..') && !path.isAbsolute(relativePath));
+}
+
+function inferFenceLanguage(filePath: string): string {
+  const extension = path.extname(filePath).toLowerCase();
+  switch (extension) {
+    case '.ts':
+      return 'ts';
+    case '.tsx':
+      return 'tsx';
+    case '.js':
+      return 'js';
+    case '.jsx':
+      return 'jsx';
+    case '.json':
+      return 'json';
+    case '.md':
+      return 'md';
+    case '.sh':
+      return 'bash';
+    case '.yml':
+    case '.yaml':
+      return 'yaml';
+    case '.css':
+      return 'css';
+    case '.html':
+      return 'html';
+    default:
+      return 'text';
+  }
+}
+
+function sanitizeCodeFence(content: string): string {
+  return content.replaceAll('```', '``\\`');
+}
+
+function buildFileCardMarkdown(filePath: string, content: string): string {
+  if (filePath.toLowerCase().endsWith('.md')) {
+    return content;
+  }
+
+  return `\`\`\`${inferFenceLanguage(filePath)}\n${sanitizeCodeFence(content)}\n\`\`\``;
+}
+
+function truncateFileContent(content: string): { text: string; truncated: boolean } {
+  if (content.length <= MAX_READ_CARD_CHARS) {
+    return { text: content, truncated: false };
+  }
+
+  return {
+    text: `${content.slice(0, MAX_READ_CARD_CHARS)}\n\n[truncated]`,
+    truncated: true,
+  };
 }
 
 function readCommandCardTitle(text: string): string | null {
@@ -151,6 +226,76 @@ export function createBridgeApp(options: {
     }
 
     const text = message.text.trim();
+    const readCommand = parseReadCommand(text);
+    if (readCommand !== null) {
+      if (readCommand.kind === 'usage') {
+        await larkAdapter.send({
+          targetSessionId: message.sessionId,
+          text: 'Usage: //read <path>',
+        });
+        return;
+      }
+
+      const projectId = await bindingService.getProjectBySession(message.sessionId);
+      if (projectId === null) {
+        await larkAdapter.send({
+          targetSessionId: message.sessionId,
+          text: '[codex-bridge] this chat is not bound to any project',
+        });
+        return;
+      }
+
+      const projectConfig = options.projectRegistry.getProjectConfig?.(projectId) ?? null;
+      const cwd = projectConfig?.cwd?.trim();
+      if (cwd === undefined || cwd === '') {
+        await larkAdapter.send({
+          targetSessionId: message.sessionId,
+          text: '[codex-bridge] project cwd is not configured for //read',
+        });
+        return;
+      }
+
+      const resolvedPath = path.resolve(cwd, readCommand.targetPath);
+      if (!isPathWithinRoot(cwd, resolvedPath)) {
+        await larkAdapter.send({
+          targetSessionId: message.sessionId,
+          text: '[codex-bridge] //read only supports files under the project cwd',
+        });
+        return;
+      }
+
+      try {
+        const rawContent = await readFile(resolvedPath, 'utf8');
+        const fileContent = truncateFileContent(rawContent);
+        const relativePath = path.relative(cwd, resolvedPath) || path.basename(resolvedPath);
+        const bodyMarkdown = buildFileCardMarkdown(relativePath, fileContent.text);
+        const fallbackText = fileContent.truncated ? `${fileContent.text}` : rawContent;
+
+        await larkAdapter.sendCard({
+          targetSessionId: message.sessionId,
+          card: buildMarkdownContentCard({
+            title: relativePath,
+            subtitle: projectId,
+            bodyMarkdown,
+            footerItems: [
+              { label: 'Project', value: projectId },
+              { label: 'PATH', value: resolvedPath },
+              { label: 'Transport', value: projectConfig?.transport ?? 'n/a' },
+            ],
+            template: 'green',
+          }),
+          fallbackText,
+        });
+      } catch (error) {
+        const messageText = error instanceof Error ? error.message : String(error);
+        await larkAdapter.send({
+          targetSessionId: message.sessionId,
+          text: `[codex-bridge] failed to read file: ${messageText}`,
+        });
+      }
+      return;
+    }
+
     const commandLines = await chatCommandService.execute({
       sessionId: message.sessionId,
       senderId: message.senderId,

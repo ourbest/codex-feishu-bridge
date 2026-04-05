@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
@@ -270,6 +270,92 @@ test('renders codex query command results as interactive cards', async () => {
   assert.ok(secondCard.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('id: thr_123')));
 
   await app.stop();
+});
+
+test('renders //read file content as an interactive markdown card', async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'codex-bridge-read-'));
+  const relativePath = 'src/example.ts';
+  const absolutePath = join(tempDir, relativePath);
+  mkdirSync(join(tempDir, 'src'), { recursive: true });
+  writeFileSync(absolutePath, 'export const answer = 42;\n', 'utf8');
+
+  const sentMessages: Array<{ sessionId: string; text: string }> = [];
+  const sentCards: Array<{ sessionId: string; card: { msg_type: 'interactive'; content: string }; fallbackText?: string }> = [];
+  const reactions: Array<{ targetMessageId: string; emojiType: string }> = [];
+  let eventHandler: ((event: LarkEventPayload) => Promise<void> | void) | null = null;
+
+  const transport: LarkTransport = {
+    onEvent(handler) {
+      eventHandler = handler;
+    },
+    async sendMessage(message) {
+      sentMessages.push(message);
+    },
+    async sendCard(message) {
+      sentCards.push(message);
+    },
+    async sendReaction(message) {
+      reactions.push(message);
+    },
+  };
+
+  const app = createBridgeApp({
+    config: loadConfig({}),
+    larkTransport: transport,
+    projectRegistry: {
+      async describeProject(projectInstanceId) {
+        return {
+          projectInstanceId,
+          configured: true,
+          active: true,
+          removed: false,
+          sessionCount: 1,
+        };
+      },
+      getProjectConfig(projectInstanceId) {
+        return {
+          projectInstanceId,
+          cwd: tempDir,
+          transport: 'stdio',
+          command: 'codex',
+          args: ['app-server'],
+        };
+      },
+    },
+  });
+
+  await app.bindingService.bindProjectToSession('project-a', 'session-a');
+  await app.start();
+  assert.ok(eventHandler);
+
+  await eventHandler!({
+    sessionId: 'session-a',
+    messageId: 'message-read',
+    text: `//read ${relativePath}`,
+    senderId: 'user-a',
+    timestamp: '2026-03-29T00:00:00.000Z',
+  });
+
+  assert.deepEqual(reactions, [
+    {
+      targetMessageId: 'message-read',
+      emojiType: 'THUMBSUP',
+    },
+  ]);
+  assert.deepEqual(sentMessages, []);
+  assert.equal(sentCards.length, 1);
+  assert.match(sentCards[0]?.fallbackText ?? '', /export const answer = 42;/);
+
+  const card = JSON.parse(sentCards[0]?.card.content ?? '{}') as {
+    header?: { title?: { content?: string } };
+    body?: { elements?: Array<{ tag?: string; content?: string }> };
+  };
+  assert.equal(card.header?.title?.content, relativePath);
+  assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('```ts')));
+  assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('export const answer = 42;')));
+
+  await app.stop();
+  rmSync(tempDir, { recursive: true, force: true });
 });
 
 test('acknowledges //restart before invoking the restart callback', async () => {
