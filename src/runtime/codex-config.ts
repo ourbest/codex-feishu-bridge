@@ -11,10 +11,6 @@ export interface RuntimeEnvCodexConfig {
   BRIDGE_CODEX_SERVICE_NAME?: string;
   BRIDGE_CODEX_TRANSPORT?: string;
   BRIDGE_CODEX_WEBSOCKET_URL?: string;
-  BRIDGE_ADAPTER_TYPE?: string;
-  BRIDGE_CLAUDE_API_KEY?: string;
-  BRIDGE_CLAUDE_MODEL?: string;
-  BRIDGE_CLAUDE_BASE_URL?: string;
 }
 
 export interface CodexRuntimeConfig {
@@ -26,9 +22,6 @@ export interface CodexRuntimeConfig {
   serviceName: string;
   transport: 'stdio' | 'websocket';
   websocketUrl?: string;
-  adapterType?: 'codex' | 'claude';
-  apiKey?: string;
-  baseUrl?: string;
 }
 
 const SERIALIZED_CWD = Symbol('serializedCwd');
@@ -49,10 +42,8 @@ export function writeProjectsFile(filePath: string, projects: ProjectConfigEntry
   const snapshot = {
     projects: projects.map((entry) => {
       const serializedCwd = readSerializedCwd(entry);
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const { adapterType, apiKey, baseUrl, ...rest } = entry;
       return {
-        ...rest,
+        ...entry,
         ...(serializedCwd !== undefined ? { cwd: serializedCwd } : {}),
       };
     }),
@@ -133,8 +124,7 @@ function parseArgs(value: string | undefined): string[] {
 function normalizeProjectConfig(input: Partial<CodexRuntimeConfig> & { projectInstanceId: string }): CodexRuntimeConfig {
   const transport = input.transport ?? 'websocket';
   const model = input.model?.trim();
-  const adapterType = input.adapterType ?? 'codex';
-  const result: CodexRuntimeConfig = {
+  return {
     projectInstanceId: input.projectInstanceId.trim(),
     command: input.command?.trim() || 'codex',
     args: input.args ?? ['app-server'],
@@ -143,15 +133,7 @@ function normalizeProjectConfig(input: Partial<CodexRuntimeConfig> & { projectIn
     serviceName: input.serviceName?.trim() || 'codex-bridge',
     transport,
     websocketUrl: transport === 'stdio' ? undefined : input.websocketUrl?.trim() || 'ws://127.0.0.1:4000',
-    adapterType,
   };
-
-  if (adapterType === 'claude') {
-    result.apiKey = input.apiKey?.trim();
-    result.baseUrl = input.baseUrl?.trim();
-  }
-
-  return result;
 }
 
 function createProjectConfigEntry(entry: CodexRuntimeConfig, serializedCwd?: string): ProjectConfigEntry {
@@ -188,8 +170,7 @@ function parseProjectConfigs(value: string | undefined): CodexRuntimeConfig[] | 
     }
 
     const record = entry as Partial<CodexRuntimeConfig> & { projectInstanceId: string };
-    const adapterType = record.adapterType ?? 'codex';
-    const result: CodexRuntimeConfig = {
+    return {
       projectInstanceId: record.projectInstanceId,
       command: record.command?.trim() || 'codex',
       args: Array.isArray(record.args) ? record.args : ['app-server'],
@@ -199,15 +180,7 @@ function parseProjectConfigs(value: string | undefined): CodexRuntimeConfig[] | 
       transport: record.transport ?? 'websocket',
       websocketUrl:
         (record.transport ?? 'websocket') === 'stdio' ? undefined : record.websocketUrl?.trim() || 'ws://127.0.0.1:4000',
-      adapterType,
     };
-
-    if (adapterType === 'claude') {
-      result.apiKey = record.apiKey?.trim();
-      result.baseUrl = record.baseUrl?.trim();
-    }
-
-    return result;
   });
 }
 
@@ -236,9 +209,6 @@ export function resolveCodexRuntimeConfigs(env: RuntimeEnvCodexConfig = process.
       serviceName: env.BRIDGE_CODEX_SERVICE_NAME?.trim() || 'codex-bridge',
       transport: env.BRIDGE_CODEX_TRANSPORT?.trim() === 'stdio' ? 'stdio' : 'websocket',
       websocketUrl: resolveWebSocketUrl(env),
-      adapterType: env.BRIDGE_ADAPTER_TYPE?.trim() as 'codex' | 'claude' | undefined,
-      apiKey: env.BRIDGE_CLAUDE_API_KEY?.trim(),
-      baseUrl: env.BRIDGE_CLAUDE_BASE_URL?.trim(),
     }),
   ];
 }
@@ -256,13 +226,9 @@ export function createCodexRuntimeConfig(input: {
   serviceName?: string;
   transport?: 'stdio' | 'websocket';
   websocketUrl?: string;
-  adapterType?: 'codex' | 'claude';
-  apiKey?: string;
-  baseUrl?: string;
 }): CodexRuntimeConfig {
   const model = input.model?.trim();
-  const adapterType = input.adapterType ?? 'codex';
-  const entry: CodexRuntimeConfig = {
+  const entry = {
     projectInstanceId: input.projectInstanceId.trim(),
     command: input.command?.trim() || 'codex',
     args: input.args ?? ['app-server'],
@@ -272,13 +238,6 @@ export function createCodexRuntimeConfig(input: {
     transport: input.transport ?? 'websocket',
     websocketUrl:
       (input.transport ?? 'websocket') === 'stdio' ? undefined : input.websocketUrl?.trim() || 'ws://127.0.0.1:4000',
-    adapterType,
   };
-
-  if (adapterType === 'claude') {
-    entry.apiKey = input.apiKey?.trim();
-    entry.baseUrl = input.baseUrl?.trim();
-  }
-
   return createProjectConfigEntry(entry, input.cwd?.trim() || undefined);
 }
