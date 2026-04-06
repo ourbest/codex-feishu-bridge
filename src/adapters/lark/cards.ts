@@ -95,6 +95,43 @@ export function buildProjectReplyCard(input: {
   });
 }
 
+export function buildBridgeStatusCard(input: {
+  projectTitle: string;
+  statusLabel: string;
+  bodyMarkdown: string;
+  footerItems?: CardFooterItem[];
+  template?: 'blue' | 'turquoise' | 'green' | 'yellow' | 'red' | 'grey';
+}): FeishuInteractiveCardMessage {
+  const elements: Array<Record<string, unknown>> = [
+    {
+      tag: 'markdown',
+      content: input.bodyMarkdown,
+    },
+  ];
+
+  if (input.footerItems !== undefined && input.footerItems.length > 0) {
+    elements.push({ tag: 'hr' });
+    elements.push(buildFooterMarkdown(input.footerItems));
+  }
+
+  return buildInteractiveCardMessage({
+    schema: '2.0',
+    config: {
+      enable_forward: true,
+      update_multi: true,
+      width_mode: 'fill',
+    },
+    header: {
+      template: input.template ?? 'blue',
+      title: plainText(input.projectTitle),
+      subtitle: plainText(input.statusLabel),
+    },
+    body: {
+      elements,
+    },
+  });
+}
+
 export function buildMarkdownContentCard(input: {
   title: string;
   bodyMarkdown: string;
@@ -347,6 +384,20 @@ export function buildUnboundCard(input: {
         },
       ],
     },
+  });
+}
+
+export function buildUnavailableProjectCard(input: {
+  projectId: string;
+  lines: string[];
+  footerItems?: CardFooterItem[];
+}): FeishuInteractiveCardMessage {
+  return buildBridgeStatusCard({
+    projectTitle: input.projectId,
+    statusLabel: 'Unavailable',
+    bodyMarkdown: buildCodeBlockMarkdown(input.lines),
+    footerItems: input.footerItems,
+    template: 'red',
   });
 }
 

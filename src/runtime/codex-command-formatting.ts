@@ -4,6 +4,10 @@ const MAX_SCALAR_LENGTH = 120;
 type UnknownRecord = Record<string, unknown>;
 
 export function formatCodexCommandResult(method: string, result: unknown): string[] {
+  if (method === 'review/start' && isRecord(result)) {
+    return formatReviewStartResponse(result);
+  }
+
   const list = readList(result);
   if (list !== null) {
     return formatList(method, list, method === 'thread/list' ? null : MAX_ITEMS);
@@ -45,6 +49,36 @@ function formatList(method: string, items: unknown[], maxItems: number | null): 
 
 function formatObject(method: string, value: UnknownRecord): string[] {
   return [`[codex-bridge] ${method}`, ...formatObjectFields(value)];
+}
+
+function formatReviewStartResponse(value: UnknownRecord): string[] {
+  const lines = ['[codex-bridge] review/start'];
+  const reviewThreadId = typeof value.reviewThreadId === 'string' ? value.reviewThreadId : null;
+  const turn = isRecord(value.turn) ? value.turn : null;
+  const turnId = turn !== null && typeof turn.id === 'string' ? turn.id : null;
+  const status = turn !== null && typeof turn.status === 'string' ? turn.status : null;
+  const error =
+    turn !== null && isRecord(turn.error) && typeof turn.error.message === 'string'
+      ? turn.error.message
+      : null;
+
+  if (reviewThreadId !== null) {
+    lines.push(`reviewThreadId: ${reviewThreadId}`);
+  }
+
+  if (turnId !== null) {
+    lines.push(`turnId: ${turnId}`);
+  }
+
+  if (status !== null) {
+    lines.push(`status: ${status}`);
+  }
+
+  if (error !== null && error.trim() !== '') {
+    lines.push(`error: ${formatScalar(error)}`);
+  }
+
+  return lines;
 }
 
 function formatObjectFields(value: UnknownRecord): string[] {

@@ -1,7 +1,7 @@
 import { watch, type FSWatcher } from 'node:fs';
 import path from 'node:path';
 
-import { loadProjectsFromFile, type ProjectConfigEntry } from './codex-config.ts';
+import { cloneProjectConfigEntry, loadProjectsFromFile, type ProjectConfigEntry } from './codex-config.ts';
 
 export interface ProjectConfigWatcherOptions {
   filePath: string;
@@ -18,7 +18,7 @@ export interface ProjectConfigWatcher {
 }
 
 function cloneProjects(projects: ProjectConfigEntry[]): ProjectConfigEntry[] {
-  return projects.map((entry) => ({ ...entry }));
+  return projects.map((entry) => cloneProjectConfigEntry(entry));
 }
 
 function equalProjects(left: ProjectConfigEntry[], right: ProjectConfigEntry[]): boolean {

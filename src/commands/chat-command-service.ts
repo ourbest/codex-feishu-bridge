@@ -28,12 +28,14 @@ export interface ChatCommandServiceDependencies {
   bindingService: BindingService;
   projectRegistry: {
     describeProject(projectInstanceId: string): Promise<ProjectState>;
-    getProjectConfig?(projectInstanceId: string): { cwd?: string | null } | null;
+    getProjectConfig?(projectInstanceId: string): { cwd?: string | null; model?: string | null } | null;
+    updateProjectConfig?(projectInstanceId: string, input: { model?: string | null }): Promise<{ model?: string | null } | null> | { model?: string | null } | null;
     startThread?(projectInstanceId: string, options?: { cwd?: string; force?: boolean }): Promise<string>;
     getLastThread?(projectInstanceId: string, sessionId: string): Promise<string | null>;
     resumeThread?(projectInstanceId: string, threadId: string): Promise<string>;
   };
   approvalService?: ApprovalService;
+  getCodexStatusLines?: () => Promise<string[]>;
   executeCodexCommand?: (input: CodexCommandExecutionInput) => Promise<string[]>;
   executeStructuredCodexCommand?: (input: StructuredCodexCommandExecutionInput) => Promise<string[]>;
   reloadProjects?: () => Promise<string[]>;
@@ -44,7 +46,7 @@ export interface ChatCommandService {
 }
 
 function isBridgeCommandToken(token: string): boolean {
-  return token === 'bind' || token === 'unbind' || token === 'list' || token === 'help' || token === 'sessions' || token === 'read' || token === 'restart' || token === 'reload' || token === 'resume' || token === 'new';
+  return token === 'bind' || token === 'unbind' || token === 'list' || token === 'help' || token === 'status' || token === 'sessions' || token === 'read' || token === 'restart' || token === 'reload' || token === 'resume' || token === 'new' || token === 'model';
 }
 
 function isCodexCommandToken(token: string): boolean {
@@ -56,10 +58,7 @@ const SUPPORTED_CODEX_METHODS = new Set([
   'app/list',
   'session/list',
   'thread/list',
-  'session/get',
-  'thread/get',
   'thread/read',
-  'thread/start',
   'review',
 ] as const);
 
@@ -67,10 +66,7 @@ type SupportedCodexMethod =
   | 'app/list'
   | 'session/list'
   | 'thread/list'
-  | 'session/get'
-  | 'thread/get'
   | 'thread/read'
-  | 'thread/start'
   | 'review/start';
 
 const REVIEW_USAGE = 'Usage: review [--uncommitted | --base <branch> | --commit <sha> [--title <title>] | <instructions>]';
@@ -90,8 +86,9 @@ function buildHelpLines(): string[] {
     '  //unbind            - unbind this chat',
     '  //list              - show current binding',
     '  //new               - start a new codex thread for this chat',
-    '  //sessions          - show bridge and codex state',
+    '  //status            - show bridge and codex state',
     '  //read <path>       - read a project file as a card',
+    '  //model <model>     - set the project model',
     '  //restart           - restart the bridge process',
     '  //reload projects   - reload projects.json',
     '  //resume <threadId|last> - resume a codex thread (threadId comes from thread/list)',
@@ -100,19 +97,18 @@ function buildHelpLines(): string[] {
     '  //approve-all <id>  - approve one request for the session',
     '  //deny <id>         - deny one request',
     '  //help              - show this help',
-    '  app/list            - list codex apps',
-    '  session/list        - list codex sessions',
-    '  thread/list         - list codex threads',
-    '  session/get <id>    - get a codex session',
-    '  review              - review the current working tree',
-    '  thread/start        - start a new codex thread',
-    '  thread/read <id>    - get a codex thread',
+    '  //app/list          - list codex apps',
+    '  //session/list      - list codex sessions',
+    '  //thread/list       - list codex threads',
+    '  //thread/read <id>  - inspect a codex thread',
+    '  //review            - review the current working tree',
   ];
 }
 
 async function buildSessionStateLines(
   bindingService: BindingService,
   projectRegistry: ChatCommandServiceDependencies['projectRegistry'],
+  getCodexStatusLines: ChatCommandServiceDependencies['getCodexStatusLines'],
   sessionId: string,
   senderId: string,
 ): Promise<string[] | null> {
@@ -122,7 +118,7 @@ async function buildSessionStateLines(
   }
 
   const state = await projectRegistry.describeProject(projectId);
-  return [
+  const lines = [
     '[codex-bridge] Bridge State:',
     `  chatId: ${sessionId}`,
     `  senderId: ${senderId}`,
@@ -133,6 +129,16 @@ async function buildSessionStateLines(
     `  active: ${yesNo(state.active)}`,
     `  removed: ${yesNo(state.removed)}`,
   ];
+
+  if (getCodexStatusLines !== undefined) {
+    try {
+      lines.push(...await getCodexStatusLines());
+    } catch {
+      // Keep the bridge status visible even if the local Codex status read fails.
+    }
+  }
+
+  return lines;
 }
 
 function parseCommand(text: string): { kind: 'bridge' | 'codex' | 'unknown' | 'none'; command: string; args: string[] } {
@@ -144,8 +150,24 @@ function parseCommand(text: string): { kind: 'bridge' | 'codex' | 'unknown' | 'n
   if (trimmed.startsWith('//')) {
     const parts = trimmed.slice(2).trim().split(/\s+/).filter(Boolean);
     const command = parts[0]?.toLowerCase() ?? '';
+    if (isBridgeCommandToken(command)) {
+      return {
+        kind: 'bridge',
+        command,
+        args: parts.slice(1),
+      };
+    }
+
+    if (isCodexCommandToken(command)) {
+      return {
+        kind: 'codex',
+        command,
+        args: parts.slice(1),
+      };
+    }
+
     return {
-      kind: isBridgeCommandToken(command) ? 'bridge' : 'unknown',
+      kind: 'unknown',
       command,
       args: parts.slice(1),
     };
@@ -153,18 +175,10 @@ function parseCommand(text: string): { kind: 'bridge' | 'codex' | 'unknown' | 'n
 
   const parts = trimmed.split(/\s+/).filter(Boolean);
   const command = parts[0]?.toLowerCase() ?? '';
-  if (isBridgeCommandToken(command)) {
+  if (isBridgeCommandToken(command) || isCodexCommandToken(command)) {
     return {
-      kind: 'bridge',
+      kind: 'unknown',
       command,
-      args: parts.slice(1),
-    };
-  }
-
-  if (isCodexCommandToken(command)) {
-    return {
-      kind: 'codex',
-      command: parts[0] ?? '',
       args: parts.slice(1),
     };
   }
@@ -192,7 +206,7 @@ async function startNewThreadLines(
   projectId: string,
 ): Promise<string[]> {
   if (dependencies.projectRegistry.startThread === undefined) {
-    return buildCodexSupportNotConfiguredLines(projectId, 'thread/start');
+    return buildCodexSupportNotConfiguredLines(projectId, '//new');
   }
 
   const projectConfig = dependencies.projectRegistry.getProjectConfig?.(projectId);
@@ -202,6 +216,34 @@ async function startNewThreadLines(
   });
 
   return [`[codex-bridge] started new thread ${threadId} for this chat`];
+}
+
+async function updateProjectModelLines(
+  dependencies: ChatCommandServiceDependencies,
+  projectId: string,
+  model: string | null | undefined,
+): Promise<string[]> {
+  const projectConfig = dependencies.projectRegistry.getProjectConfig?.(projectId) ?? null;
+  if (projectConfig === null) {
+    return [`[codex-bridge] project config is not available for ${projectId}`];
+  }
+
+  if (dependencies.projectRegistry.updateProjectConfig === undefined) {
+    return ['[codex-bridge] project model updates are not configured'];
+  }
+
+  if (model === undefined) {
+    const currentModel = projectConfig.model?.trim();
+    return currentModel ? [`[codex-bridge] project model: ${currentModel}`] : ['[codex-bridge] project model is not configured'];
+  }
+
+  const normalizedModel = model.trim();
+  if (normalizedModel === '') {
+    return ['Usage: //model <model>'];
+  }
+
+  await dependencies.projectRegistry.updateProjectConfig(projectId, { model: normalizedModel });
+  return [`[codex-bridge] project model set to ${normalizedModel}`];
 }
 
 function resolveCodexCommand(
@@ -217,18 +259,9 @@ function resolveCodexCommand(
     return { kind: 'unsupported', raw: command };
   }
 
-  if (normalizedCommand === 'app/list' || normalizedCommand === 'session/list' || normalizedCommand === 'thread/list' || normalizedCommand === 'thread/start') {
+  if (normalizedCommand === 'app/list' || normalizedCommand === 'session/list' || normalizedCommand === 'thread/list') {
     if (args.length > 0) {
       return { kind: 'usage', lines: [`Usage: ${normalizedCommand}`] };
-    }
-
-    if (normalizedCommand === 'thread/start') {
-      return {
-        kind: 'supported',
-        method: 'thread/start',
-        params: {},
-        legacyArgs: [],
-      };
     }
 
     return {
@@ -245,10 +278,10 @@ function resolveCodexCommand(
 
   return {
     kind: 'supported',
-    method: 'thread/read',
-    params: {
-      id: args[0],
-      threadId: args[0],
+      method: 'thread/read',
+      params: {
+        id: args[0],
+        threadId: args[0],
     },
     legacyArgs: args.slice(0, 1),
   };
@@ -395,16 +428,31 @@ export function createChatCommandService(dependencies: ChatCommandServiceDepende
             return await startNewThreadLines(dependencies, projectId);
           }
 
+          case 'status':
           case 'sessions':
             return await buildSessionStateLines(
               dependencies.bindingService,
               dependencies.projectRegistry,
+              dependencies.getCodexStatusLines,
               input.sessionId,
               input.senderId,
             );
 
           case 'read':
             return parsed.args.length === 0 ? ['Usage: //read <path>'] : ['[codex-bridge] reading file...'];
+
+          case 'model': {
+            if (parsed.args.length > 1) {
+              return ['Usage: //model <model>'];
+            }
+
+            const projectId = await dependencies.bindingService.getProjectBySession(input.sessionId);
+            if (projectId === null) {
+              return formatNotBoundMessage();
+            }
+
+            return await updateProjectModelLines(dependencies, projectId, parsed.args[0]);
+          }
 
           case 'restart':
             return ['[codex-bridge] restarting bridge process...'];
@@ -471,9 +519,6 @@ export function createChatCommandService(dependencies: ChatCommandServiceDepende
       }
 
       const projectConfig = dependencies.projectRegistry.getProjectConfig?.(projectId);
-      if (resolved.method === 'thread/start') {
-        return await startNewThreadLines(dependencies, projectId);
-      }
 
       if (
         dependencies.executeStructuredCodexCommand === undefined &&

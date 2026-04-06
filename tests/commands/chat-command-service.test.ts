@@ -177,7 +177,7 @@ test('resumes the last thread for the bound chat', async () => {
   ]);
 });
 
-test('starts a fresh thread for //new and thread/start on the bound chat', async () => {
+test('starts a fresh thread for //new on the bound chat', async () => {
   const bindingService = createBindingService();
   const registry = createProjectRegistry({
     getProjectConfig: (projectInstanceId) =>
@@ -224,22 +224,8 @@ test('starts a fresh thread for //new and thread/start on the bound chat', async
     text: '//new',
   });
 
-  const threadStartLines = await service.execute({
-    sessionId: 'chat-a',
-    senderId: 'user-a',
-    text: 'thread/start',
-  });
-
   assert.deepEqual(newLines, ['[codex-bridge] started new thread thr_new_1 for this chat']);
-  assert.deepEqual(threadStartLines, ['[codex-bridge] started new thread thr_new_2 for this chat']);
   assert.deepEqual(calls, [
-    {
-      projectInstanceId: 'project-a',
-      options: {
-        cwd: '/repo/project-a',
-        force: true,
-      },
-    },
     {
       projectInstanceId: 'project-a',
       options: {
@@ -250,7 +236,77 @@ test('starts a fresh thread for //new and thread/start on the bound chat', async
   ]);
 });
 
-test('returns bridge and codex state for //sessions on a bound chat', async () => {
+test('shows and updates the bound project model through //model', async () => {
+  const bindingService = createBindingService();
+  const projectConfig: {
+    projectInstanceId: string;
+    websocketUrl: string;
+    cwd: string;
+    model?: string;
+  } = {
+    projectInstanceId: 'project-a',
+    websocketUrl: 'ws://localhost:4000',
+    cwd: '/repo/project-a',
+    model: 'gpt-5.4',
+  };
+  const updates: Array<{ projectInstanceId: string; input: { model?: string | null } }> = [];
+  const registry = createProjectRegistry({
+    getProjectConfig: (projectInstanceId) =>
+      projectInstanceId === 'project-a' ? projectConfig : null,
+    createClient: () => ({
+      async generateReply() {
+        return 'reply';
+      },
+      async stop() {},
+    }),
+  });
+
+  await bindingService.bindProjectToSession('project-a', 'chat-a');
+  await registry.onBindingChanged({ type: 'bound', projectId: 'project-a', sessionId: 'chat-a' });
+
+  const service = createChatCommandService({
+    bindingService,
+    projectRegistry: {
+      ...registry,
+      getProjectConfig(projectInstanceId: string) {
+        return projectInstanceId === 'project-a' ? projectConfig : null;
+      },
+      async updateProjectConfig(projectInstanceId: string, input: { model?: string | null }) {
+        updates.push({ projectInstanceId, input });
+        if (input.model !== undefined) {
+          projectConfig.model = input.model?.trim() || undefined;
+        }
+        return projectConfig;
+      },
+    },
+  });
+
+  const readLines = await service.execute({
+    sessionId: 'chat-a',
+    senderId: 'user-a',
+    text: '//model',
+  });
+
+  const updateLines = await service.execute({
+    sessionId: 'chat-a',
+    senderId: 'user-a',
+    text: '//model gpt-5.4-mini',
+  });
+
+  assert.deepEqual(readLines, ['[codex-bridge] project model: gpt-5.4']);
+  assert.deepEqual(updateLines, ['[codex-bridge] project model set to gpt-5.4-mini']);
+  assert.deepEqual(updates, [
+    {
+      projectInstanceId: 'project-a',
+      input: {
+        model: 'gpt-5.4-mini',
+      },
+    },
+  ]);
+  assert.equal(projectConfig.model, 'gpt-5.4-mini');
+});
+
+test('returns bridge and codex state for //status on a bound chat', async () => {
   const bindingService = createBindingService();
   const registry = createProjectRegistry({
     getProjectConfig: (projectInstanceId) =>
@@ -271,12 +327,22 @@ test('returns bridge and codex state for //sessions on a bound chat', async () =
   const service = createChatCommandService({
     bindingService,
     projectRegistry: registry,
+    getCodexStatusLines: async () => [
+      '[codex] model: gpt-5.4-mini (reasoning medium, summaries auto)',
+      '[codex] directory: ~/git/codex-bridge',
+      '[codex] permissions: Full Access',
+      '[codex] agents.md: AGENTS.md',
+      '[codex] collaboration mode: Default',
+      '[codex] session: 019d5e2f-9356-7903-9cdd-5ed89c556893',
+      '[codex] 5h limit: 99% left (resets 11:01)',
+      '[codex] weekly limit: 25% left (resets 18:26 on 8 Apr)',
+    ],
   });
 
   const lines = await service.execute({
     sessionId: 'chat-a',
     senderId: 'user-a',
-    text: '//sessions',
+    text: '//status',
   });
 
   assert.deepEqual(lines, [
@@ -289,6 +355,14 @@ test('returns bridge and codex state for //sessions on a bound chat', async () =
     '  configured: yes',
     '  active: yes',
     '  removed: no',
+    '[codex] model: gpt-5.4-mini (reasoning medium, summaries auto)',
+    '[codex] directory: ~/git/codex-bridge',
+    '[codex] permissions: Full Access',
+    '[codex] agents.md: AGENTS.md',
+    '[codex] collaboration mode: Default',
+    '[codex] session: 019d5e2f-9356-7903-9cdd-5ed89c556893',
+    '[codex] 5h limit: 99% left (resets 11:01)',
+    '[codex] weekly limit: 25% left (resets 18:26 on 8 Apr)',
   ]);
 });
 
@@ -355,6 +429,55 @@ test('returns an acknowledgement for //restart', async () => {
   assert.deepEqual(lines, ['[codex-bridge] restarting bridge process...']);
 });
 
+test('rejects bare codex commands without the // prefix', async () => {
+  const bindingService = createBindingService();
+  const registry = createProjectRegistry({
+    getProjectConfig: () => null,
+    createClient: () => ({
+      async generateReply() {
+        return 'reply';
+      },
+      async stop() {},
+    }),
+  });
+
+  const service = createChatCommandService({
+    bindingService,
+    projectRegistry: registry,
+  });
+
+  const lines = await service.execute({
+    sessionId: 'chat-a',
+    senderId: 'user-a',
+    text: 'app/list',
+  });
+
+  assert.deepEqual(lines, [
+    '[codex-bridge] unknown command: app/list',
+    '[codex-bridge] commands:',
+    '  //bind <projectId>  - bind this chat to a project',
+    '  //unbind            - unbind this chat',
+    '  //list              - show current binding',
+    '  //new               - start a new codex thread for this chat',
+    '  //status            - show bridge and codex state',
+    '  //read <path>       - read a project file as a card',
+    '  //model <model>     - set the project model',
+    '  //restart           - restart the bridge process',
+    '  //reload projects   - reload projects.json',
+    '  //resume <threadId|last> - resume a codex thread (threadId comes from thread/list)',
+    '  //approvals         - list pending approval requests',
+    '  //approve <id>      - approve one request',
+    '  //approve-all <id>  - approve one request for the session',
+    '  //deny <id>         - deny one request',
+    '  //help              - show this help',
+    '  //app/list          - list codex apps',
+    '  //session/list      - list codex sessions',
+    '  //thread/list       - list codex threads',
+    '  //thread/read <id>  - inspect a codex thread',
+    '  //review            - review the current working tree',
+  ]);
+});
+
 test('shows //read in help output', async () => {
   const bindingService = createBindingService();
   const registry = createProjectRegistry({
@@ -381,7 +504,7 @@ test('shows //read in help output', async () => {
   assert.ok(lines?.includes('  //read <path>       - read a project file as a card'));
 });
 
-test('routes bare codex commands through the executor when bound', async () => {
+test('routes prefixed codex commands through the executor when bound', async () => {
   const bindingService = createBindingService();
   const registry = createProjectRegistry({
     getProjectConfig: (projectInstanceId) =>
@@ -418,7 +541,7 @@ test('routes bare codex commands through the executor when bound', async () => {
   const lines = await service.execute({
     sessionId: 'chat-a',
     senderId: 'user-a',
-    text: 'app/list',
+    text: '//app/list',
   });
 
   assert.deepEqual(calls, [
@@ -433,7 +556,7 @@ test('routes bare codex commands through the executor when bound', async () => {
   assert.deepEqual(lines, ['[codex-bridge] codex ok']);
 });
 
-test('returns a configuration error when the codex executor is unavailable', async () => {
+test('returns a configuration error when the prefixed codex executor is unavailable', async () => {
   const bindingService = createBindingService();
   const registry = createProjectRegistry({
     getProjectConfig: (projectInstanceId) =>
@@ -459,7 +582,7 @@ test('returns a configuration error when the codex executor is unavailable', asy
   const lines = await service.execute({
     sessionId: 'chat-a',
     senderId: 'user-a',
-    text: 'app/list',
+    text: '//app/list',
   });
 
   assert.deepEqual(lines, [
@@ -506,7 +629,7 @@ test('routes a whitelisted structured codex command through the executor', async
   const lines = await service.execute({
     sessionId: 'chat-a',
     senderId: 'user-a',
-    text: 'session/get chat-a',
+    text: '//thread/read chat-a',
   });
 
   assert.deepEqual(calls, [
@@ -561,7 +684,7 @@ test('translates session/list to the current app-server thread/list method', asy
   const lines = await service.execute({
     sessionId: 'chat-a',
     senderId: 'user-a',
-    text: 'session/list',
+    text: '//session/list',
   });
 
   assert.deepEqual(calls, [
@@ -620,7 +743,7 @@ test('injects the bound project cwd into thread/list requests', async () => {
   const lines = await service.execute({
     sessionId: 'chat-a',
     senderId: 'user-a',
-    text: 'thread/list',
+    text: '//thread/list',
   });
 
   assert.deepEqual(calls, [
@@ -681,7 +804,7 @@ test('routes review without arguments to a review/start request for uncommitted 
   const lines = await service.execute({
     sessionId: 'chat-a',
     senderId: 'user-a',
-    text: 'review',
+    text: '//review',
   });
 
   assert.deepEqual(calls, [
@@ -743,7 +866,7 @@ test('routes review --base to a review/start request', async () => {
   const lines = await service.execute({
     sessionId: 'chat-a',
     senderId: 'user-a',
-    text: 'review --base main',
+    text: '//review --base main',
   });
 
   assert.deepEqual(calls, [
@@ -806,7 +929,7 @@ test('routes review custom instructions to a review/start request', async () => 
   const lines = await service.execute({
     sessionId: 'chat-a',
     senderId: 'user-a',
-    text: 'review focus on security and data races',
+    text: '//review focus on security and data races',
   });
 
   assert.deepEqual(calls, [
@@ -879,7 +1002,7 @@ test('starts a thread for review when no current thread is recorded', async () =
   const lines = await service.execute({
     sessionId: 'chat-a',
     senderId: 'user-a',
-    text: 'review',
+    text: '//review',
   });
 
   assert.deepEqual(startCalls, [
@@ -949,7 +1072,7 @@ test('does not start a thread for review when codex executor support is unavaila
   const lines = await service.execute({
     sessionId: 'chat-a',
     senderId: 'user-a',
-    text: 'review',
+    text: '//review',
   });
 
   assert.deepEqual(startCalls, []);
@@ -991,7 +1114,7 @@ test('returns usage for invalid review argument combinations', async () => {
   const lines = await service.execute({
     sessionId: 'chat-a',
     senderId: 'user-a',
-    text: 'review --base main focus on security',
+    text: '//review --base main focus on security',
   });
 
   assert.equal(called, false);
@@ -1042,8 +1165,9 @@ test('rejects unsupported codex commands before they reach the executor', async 
     '  //unbind            - unbind this chat',
     '  //list              - show current binding',
     '  //new               - start a new codex thread for this chat',
-    '  //sessions          - show bridge and codex state',
+    '  //status            - show bridge and codex state',
     '  //read <path>       - read a project file as a card',
+    '  //model <model>     - set the project model',
     '  //restart           - restart the bridge process',
     '  //reload projects   - reload projects.json',
     '  //resume <threadId|last> - resume a codex thread (threadId comes from thread/list)',
@@ -1052,13 +1176,11 @@ test('rejects unsupported codex commands before they reach the executor', async 
     '  //approve-all <id>  - approve one request for the session',
     '  //deny <id>         - deny one request',
     '  //help              - show this help',
-    '  app/list            - list codex apps',
-    '  session/list        - list codex sessions',
-    '  thread/list         - list codex threads',
-    '  session/get <id>    - get a codex session',
-    '  review              - review the current working tree',
-    '  thread/start        - start a new codex thread',
-    '  thread/read <id>    - get a codex thread',
+    '  //app/list          - list codex apps',
+    '  //session/list      - list codex sessions',
+    '  //thread/list       - list codex threads',
+    '  //thread/read <id>  - inspect a codex thread',
+    '  //review            - review the current working tree',
   ]);
 });
 
@@ -1092,8 +1214,9 @@ test('returns an error for unknown // commands instead of falling through', asyn
     '  //unbind            - unbind this chat',
     '  //list              - show current binding',
     '  //new               - start a new codex thread for this chat',
-    '  //sessions          - show bridge and codex state',
+    '  //status            - show bridge and codex state',
     '  //read <path>       - read a project file as a card',
+    '  //model <model>     - set the project model',
     '  //restart           - restart the bridge process',
     '  //reload projects   - reload projects.json',
     '  //resume <threadId|last> - resume a codex thread (threadId comes from thread/list)',
@@ -1102,12 +1225,10 @@ test('returns an error for unknown // commands instead of falling through', asyn
     '  //approve-all <id>  - approve one request for the session',
     '  //deny <id>         - deny one request',
     '  //help              - show this help',
-    '  app/list            - list codex apps',
-    '  session/list        - list codex sessions',
-    '  thread/list         - list codex threads',
-    '  session/get <id>    - get a codex session',
-    '  review              - review the current working tree',
-    '  thread/start        - start a new codex thread',
-    '  thread/read <id>    - get a codex thread',
+    '  //app/list          - list codex apps',
+    '  //session/list      - list codex sessions',
+    '  //thread/list       - list codex threads',
+    '  //thread/read <id>  - inspect a codex thread',
+    '  //review            - review the current working tree',
   ]);
 });

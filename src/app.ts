@@ -14,11 +14,13 @@ import type { BindingStore } from './storage/binding-store.ts';
 import type { ProjectDiagnostics, ProjectState } from './runtime/project-registry.ts';
 import type { ApprovalService } from './runtime/approval-service.ts';
 import type { ProjectConfig } from './runtime/project-registry.ts';
+import { readCodexStatusLines } from './runtime/codex-status.ts';
 import {
   buildBridgeStatusCard,
   buildCommandResultCard,
   buildHelpCard,
   buildMarkdownContentCard,
+  buildProjectReplyCard,
   buildUnavailableProjectCard,
   buildUnboundCard,
   type CardFooterItem,
@@ -57,8 +59,9 @@ const HELP_CARD_BRIDGE_COMMANDS = [
   { command: '//unbind', description: 'Unbind this chat.' },
   { command: '//list', description: 'Show the current binding.' },
   { command: '//new', description: 'Start a fresh Codex thread for this chat.' },
-  { command: '//sessions', description: 'Show bridge and Codex session state.' },
+  { command: '//status', description: 'Show bridge and Codex session state.' },
   { command: '//read <path>', description: 'Read a project file as a Markdown card.' },
+  { command: '//model <model>', description: 'Set the active model for the bound project.' },
   { command: '//reload projects', description: 'Reload the projects.json file.' },
   { command: '//resume <threadId|last>', description: 'Resume a Codex thread for this chat.' },
   { command: '//approvals', description: 'List pending approval requests.' },
@@ -69,27 +72,25 @@ const HELP_CARD_BRIDGE_COMMANDS = [
 ] as const;
 
 const HELP_CARD_CODEX_COMMANDS = [
-  { command: 'app/list', description: 'List supported Codex apps.' },
-  { command: 'session/list', description: 'List Codex sessions.' },
-  { command: 'thread/list', description: 'List Codex threads.' },
-  { command: 'session/get <id>', description: 'Inspect a Codex session.' },
-  { command: 'review', description: 'Review the current working tree.' },
-  { command: 'thread/start', description: 'Start a new Codex thread.' },
-  { command: 'thread/read <id>', description: 'Inspect a Codex thread.' },
+  { command: '//app/list', description: 'List supported Codex apps.' },
+  { command: '//session/list', description: 'List Codex sessions.' },
+  { command: '//thread/list', description: 'List Codex threads.' },
+  { command: '//thread/read <id>', description: 'Inspect a Codex thread.' },
+  { command: '//review', description: 'Review the current working tree.' },
 ] as const;
 
 function isHelpCommand(text: string): boolean {
   const normalized = text.trim().toLowerCase();
-  return normalized === '//help' || normalized === 'help';
+  return normalized === '//help';
 }
 
 function isRestartCommand(text: string): boolean {
   const normalized = text.trim().toLowerCase();
-  return normalized === '//restart' || normalized === 'restart';
+  return normalized === '//restart';
 }
 
 function parseReadCommand(text: string): { kind: 'usage' } | { kind: 'read'; targetPath: string } | null {
-  const match = text.trim().match(/^(?:\/\/)?read(?:\s+(.+))?$/i);
+  const match = text.trim().match(/^\/\/read(?:\s+(.+))?$/i);
   if (match === null) {
     return null;
   }
@@ -161,12 +162,16 @@ function truncateFileContent(content: string): { text: string; truncated: boolea
 
 function readCommandCardTitle(text: string): string | null {
   const normalized = text.trim().toLowerCase();
-  if (normalized === '//sessions' || normalized === 'sessions') {
+  if (normalized === '//status' || normalized === '//sessions') {
     return 'Session State';
   }
 
-  const command = normalized.startsWith('//') ? normalized.slice(2).trim().split(/\s+/)[0] : normalized.split(/\s+/)[0];
-  if (command === 'app/list' || command === 'session/list' || command === 'session/get' || command === 'thread/list' || command === 'thread/get' || command === 'thread/read') {
+  if (!normalized.startsWith('//')) {
+    return null;
+  }
+
+  const command = normalized.slice(2).trim().split(/\s+/)[0];
+  if (command === 'app/list' || command === 'session/list' || command === 'thread/list' || command === 'thread/read') {
     return command;
   }
 
@@ -347,11 +352,13 @@ export function createBridgeApp(options: {
     describeProject(projectInstanceId: string): Promise<ProjectState>;
     getProjectDiagnostics?(projectInstanceId: string): Promise<ProjectDiagnostics | null>;
     getProjectConfig?(projectInstanceId: string): ProjectConfig | null;
+    updateProjectConfig?(projectInstanceId: string, input: { model?: string | null }): Promise<ProjectConfig | null> | ProjectConfig | null;
     startThread?(projectInstanceId: string, options?: { cwd?: string; force?: boolean }): Promise<string>;
     restoreBinding?(projectInstanceId: string, sessionId: string): Promise<void>;
   };
   approvalService?: ApprovalService;
   reloadProjects?: () => Promise<string[]>;
+  codexStatusProvider?: () => Promise<string[]>;
   executeCodexCommand?: (input: {
     sessionId: string;
     senderId: string;
@@ -383,6 +390,7 @@ export function createBridgeApp(options: {
     projectRegistry: options.projectRegistry,
     approvalService: options.approvalService,
     reloadProjects: options.reloadProjects,
+    getCodexStatusLines: options.codexStatusProvider ?? readCodexStatusLines,
     executeCodexCommand: options.executeCodexCommand,
     executeStructuredCodexCommand: options.executeStructuredCodexCommand,
   });
@@ -444,6 +452,7 @@ export function createBridgeApp(options: {
     if (entry.messageId !== null) {
       try {
         updated = await larkAdapter.updateCard({
+          sessionId: input.sessionId,
           messageId: entry.messageId,
           card: presentation.card,
           fallbackText: presentation.fallbackText,
@@ -739,42 +748,16 @@ export function createBridgeApp(options: {
         return;
       }
       const projectConfig = boundProjectConfig ?? options.projectRegistry.getProjectConfig?.(projectId);
-      const completedCard = buildBridgeStatusCard({
+      const replyCard = buildProjectReplyCard({
         projectTitle: projectConfig?.projectInstanceId ?? projectId,
-        statusLabel: 'Completed',
         bodyMarkdown: outboundMessage.text,
         footerItems: buildProjectFooterItems(projectId, projectConfig),
-        template: 'green',
       });
-      const activeStatusCard = activeStatusCards.get(message.sessionId) ?? null;
-      let updated = false;
-      if (activeStatusCard?.messageId !== null) {
-        try {
-          updated = await larkAdapter.updateCard({
-            messageId: activeStatusCard.messageId,
-            card: completedCard,
-            fallbackText: outboundMessage.text,
-          });
-        } catch (error) {
-          const reason = error instanceof Error && error.message !== '' ? error.message : String(error ?? 'unknown error');
-          console.error(
-            `[codex-bridge] status card update failed: project=${projectId} session=${message.sessionId} messageId=${activeStatusCard.messageId} status=done reason="${reason}"`,
-          );
-          updated = false;
-        }
-      }
-
-      if (!updated) {
-        const result = await larkAdapter.sendCard({
-          targetSessionId: message.sessionId,
-          card: completedCard,
-          fallbackText: outboundMessage.text,
-        });
-        if (activeStatusCard !== null) {
-          activeStatusCard.messageId = result?.messageId ?? activeStatusCard.messageId;
-          activeStatusCard.lastSignature = JSON.stringify({ status: 'done', reason: outboundMessage.text, source: 'notification' });
-        }
-      }
+      await larkAdapter.sendCard({
+        targetSessionId: message.sessionId,
+        card: replyCard,
+        fallbackText: outboundMessage.text,
+      });
       activeStatusCards.delete(message.sessionId);
       return;
     }
@@ -783,7 +766,7 @@ export function createBridgeApp(options: {
     const bound = boundProjectId ?? await bindingService.getProjectBySession(message.sessionId);
     if (bound === null) {
       const fallbackText =
-        `[codex-bridge] unbound session. chatId: ${message.sessionId}, openId: ${message.senderId}\n\nCommands:\n  //bind <projectId> - bind this chat to a project\n  //unbind - unbind this chat\n  //list - list all bindings\n  //new - start a new codex thread for this chat\n  //sessions - show bridge and codex state\n  //reload projects - reload projects.json\n  //help - show this help\n  thread/start - start a new codex thread`;
+        `[codex-bridge] unbound session. chatId: ${message.sessionId}, openId: ${message.senderId}\n\nCommands:\n  //bind <projectId> - bind this chat to a project\n  //unbind - unbind this chat\n  //list - list all bindings\n  //new - start a new codex thread for this chat\n  //status - show bridge and codex state\n  //reload projects - reload projects.json\n  //help - show this help`;
 
       await larkAdapter.sendCard({
         targetSessionId: message.sessionId,
@@ -821,6 +804,7 @@ export function createBridgeApp(options: {
       let updated = false;
       try {
         updated = await larkAdapter.updateCard({
+          sessionId: message.sessionId,
           messageId: statusCardMessageId,
           card: unavailableCard,
           fallbackText: unavailableMessage,

@@ -164,6 +164,7 @@ test('sends interactive cards through sendMessageFn', async () => {
   registeredHandlers = {};
   let sentMsgType: string | null = null;
   let sentContent: string | null = null;
+  let returnedMessageId: string | null = null;
 
   const transport = createFeishuWebSocketTransport({
     appId: 'cli_test',
@@ -173,12 +174,13 @@ test('sends interactive cards through sendMessageFn', async () => {
     sendMessageFn: async (opts) => {
       sentMsgType = opts.msgType;
       sentContent = String(opts.content);
+      return { messageId: 'msg_card_1' };
     },
     sendReactionFn: mockSendReaction as never,
     onSendCard: () => {},
   });
 
-  await transport.sendCard({
+  const result = await transport.sendCard({
     sessionId: 'chat_abc',
     card: {
       msg_type: 'interactive',
@@ -190,14 +192,120 @@ test('sends interactive cards through sendMessageFn', async () => {
       }),
     },
   });
+  returnedMessageId = result?.messageId ?? null;
 
   assert.equal(sentMsgType, 'interactive');
+  assert.equal(returnedMessageId, 'msg_card_1');
   assert.deepEqual(JSON.parse(sentContent ?? '{}'), {
     header: {
       template: 'blue',
       title: { tag: 'plain_text', content: 'project-a' },
     },
   });
+});
+
+test('updates interactive cards through updateMessageFn', async () => {
+  registeredHandlers = {};
+  let updatedMessageId: string | null = null;
+  let updatedMsgType: string | null = null;
+  let updatedContent: string | null = null;
+
+  const transport = createFeishuWebSocketTransport({
+    appId: 'cli_test',
+    appSecret: 'secret',
+    wsClient: mockWsClient as never,
+    eventDispatcher: mockEventDispatcher as never,
+    sendMessageFn: mockSendMessage as never,
+    updateMessageFn: async ({ sessionId, messageId, msgType, content }) => {
+      void sessionId;
+      updatedMessageId = messageId;
+      updatedMsgType = msgType;
+      updatedContent = String(content);
+    },
+    sendReactionFn: mockSendReaction as never,
+  });
+
+  await transport.updateCard?.({
+    messageId: 'msg_card_2',
+    card: {
+      msg_type: 'interactive',
+      content: JSON.stringify({
+        header: {
+          template: 'green',
+          title: { tag: 'plain_text', content: 'Done' },
+        },
+      }),
+    },
+    fallbackText: 'Done',
+  });
+
+  assert.equal(updatedMessageId, 'msg_card_2');
+  assert.equal(updatedMsgType, 'interactive');
+  assert.deepEqual(JSON.parse(updatedContent ?? '{}'), {
+    header: {
+      template: 'green',
+      title: { tag: 'plain_text', content: 'Done' },
+    },
+  });
+});
+
+test('serializes interactive card updates for the same session', async () => {
+  registeredHandlers = {};
+  const callOrder: string[] = [];
+  let releaseFirstUpdate: (() => void) | null = null;
+
+  const firstUpdate = new Promise<void>((resolve) => {
+    releaseFirstUpdate = resolve;
+  });
+
+  const transport = createFeishuWebSocketTransport({
+    appId: 'cli_test',
+    appSecret: 'secret',
+    wsClient: mockWsClient as never,
+    eventDispatcher: mockEventDispatcher as never,
+    sendMessageFn: mockSendMessage as never,
+    updateMessageFn: async ({ messageId, content }) => {
+      callOrder.push(messageId);
+      if (messageId === 'msg_card_1') {
+        await firstUpdate;
+      }
+
+      callOrder.push(String(content));
+    },
+    sendReactionFn: mockSendReaction as never,
+  });
+
+  const first = transport.updateCard?.({
+    messageId: 'msg_card_1',
+    card: {
+      msg_type: 'interactive',
+      content: JSON.stringify({ header: { title: { tag: 'plain_text', content: 'One' } } }),
+    },
+    fallbackText: 'One',
+  });
+
+  const second = transport.updateCard?.({
+    messageId: 'msg_card_2',
+    card: {
+      msg_type: 'interactive',
+      content: JSON.stringify({ header: { title: { tag: 'plain_text', content: 'Two' } } }),
+    },
+    fallbackText: 'Two',
+  });
+
+  assert.equal(callOrder[0], 'msg_card_1');
+  assert.equal(callOrder.includes('msg_card_2'), false);
+
+  releaseFirstUpdate?.();
+  await first;
+  await second;
+
+  assert.deepEqual(callOrder, [
+    'msg_card_1',
+    JSON.stringify({ header: { title: { tag: 'plain_text', content: 'One' } } }),
+    'msg_card_2',
+    JSON.stringify({ header: { title: { tag: 'plain_text', content: 'Two' } } }),
+  ]);
 });
 
 test('routes card action triggers as inbound messages with command text', async () => {

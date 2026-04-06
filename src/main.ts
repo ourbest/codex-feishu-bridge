@@ -9,7 +9,7 @@ import {
   resolveProjectsFilePath,
   resolveStoragePath,
 } from './runtime/bootstrap.ts';
-import { loadProjectsFromFile, resolveCodexRuntimeConfigs, type ProjectConfigEntry } from './runtime/codex-config.ts';
+import { loadProjectsFromFile, resolveCodexRuntimeConfigs, type ProjectConfigEntry, writeProjectsFile } from './runtime/codex-config.ts';
 import { CodexAppServerClient } from './adapters/codex/app-server-client.ts';
 import { resolveConsoleRuntimeConfig, runCodexConsoleSession } from './runtime/codex-console.ts';
 import { createProjectRegistry } from './runtime/project-registry.ts';
@@ -33,6 +33,138 @@ export async function patchFeishuMessageCard(
       content: input.content,
     },
   });
+}
+
+type ExecuteCodexCommand = (projectInstanceId: string, input: { method: string; params: Record<string, unknown> }) => Promise<unknown>;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function readThreadIdentifier(result: unknown): string | null {
+  if (typeof result === 'string' && result.trim() !== '') {
+    return result;
+  }
+
+  if (isRecord(result)) {
+    if (typeof result.id === 'string' && result.id.trim() !== '') {
+      return result.id;
+    }
+
+    if (typeof result.threadId === 'string' && result.threadId.trim() !== '') {
+      return result.threadId;
+    }
+  }
+
+  return null;
+}
+
+function isSparseThreadReadResult(result: unknown): boolean {
+  if (typeof result === 'string') {
+    return result.trim() !== '';
+  }
+
+  if (!isRecord(result)) {
+    return false;
+  }
+
+  const keys = Object.keys(result);
+  if (keys.length === 0 || keys.length > 2) {
+    return false;
+  }
+
+  return keys.every((key) => key === 'id' || key === 'threadId') && readThreadIdentifier(result) !== null;
+}
+
+function readThreadItems(result: unknown): unknown[] | null {
+  if (Array.isArray(result)) {
+    return result;
+  }
+
+  if (!isRecord(result)) {
+    return null;
+  }
+
+  if (Array.isArray(result.data)) {
+    return result.data;
+  }
+
+  if (Array.isArray(result.threads)) {
+    return result.threads;
+  }
+
+  return null;
+}
+
+function findThreadDetails(result: unknown, threadId: string): Record<string, unknown> | null {
+  const items = readThreadItems(result);
+  if (items === null) {
+    return null;
+  }
+
+  for (const item of items) {
+    if (!isRecord(item)) {
+      continue;
+    }
+
+    if (typeof item.id === 'string' && item.id === threadId) {
+      return item;
+    }
+
+    if (typeof item.threadId === 'string' && item.threadId === threadId) {
+      return item;
+    }
+  }
+
+  return null;
+}
+
+function mergeThreadReadResult(result: unknown, details: Record<string, unknown>, threadId: string): Record<string, unknown> {
+  if (isRecord(result)) {
+    const id = typeof result.id === 'string' && result.id.trim() !== '' ? result.id : typeof details.id === 'string' && details.id.trim() !== '' ? details.id : threadId;
+    return {
+      ...details,
+      ...result,
+      id,
+    };
+  }
+
+  return {
+    ...details,
+    id: threadId,
+  };
+}
+
+export async function formatCodexCommandResultWithFallback(input: {
+  projectInstanceId: string;
+  method: string;
+  result: unknown;
+  executeCommand: ExecuteCodexCommand;
+  threadListParams?: Record<string, unknown>;
+}): Promise<string[]> {
+  if (input.method !== 'thread/read' || !isSparseThreadReadResult(input.result)) {
+    return formatCodexCommandResult(input.method, input.result);
+  }
+
+  const threadId = readThreadIdentifier(input.result);
+  if (threadId === null) {
+    return formatCodexCommandResult(input.method, input.result);
+  }
+
+  try {
+    const threadListResult = await input.executeCommand(input.projectInstanceId, {
+      method: 'thread/list',
+      params: input.threadListParams ?? {},
+    });
+    const threadDetails = findThreadDetails(threadListResult, threadId);
+    if (threadDetails !== null) {
+      return formatCodexCommandResult(input.method, mergeThreadReadResult(input.result, threadDetails, threadId));
+    }
+  } catch {
+    // Fall back to the raw thread/read result when the lookup fails.
+  }
+
+  return formatCodexCommandResult(input.method, input.result);
 }
 
 export async function run(): Promise<void> {
@@ -104,6 +236,29 @@ export async function run(): Promise<void> {
         const entry = projectConfigEntries.find((p) => p.projectInstanceId === projectInstanceId);
         return entry ?? null;
       },
+      async updateProjectConfig(projectInstanceId: string, input: { model?: string | null }) {
+        const entry = projectConfigEntries.find((p) => p.projectInstanceId === projectInstanceId);
+        if (entry === undefined) {
+          return null;
+        }
+
+        if (input.model !== undefined) {
+          const normalizedModel = input.model.trim();
+          if (normalizedModel === '') {
+            delete entry.model;
+          } else {
+            entry.model = normalizedModel;
+          }
+        }
+
+        writeProjectsFile(projectsFilePath, projectConfigEntries);
+
+        if (projectRegistryImpl !== null) {
+          await projectRegistryImpl.reconcileProjectConfigs(projectConfigEntries);
+        }
+
+        return entry;
+      },
       async startThread(projectInstanceId: string, options?: { cwd?: string; force?: boolean }) {
         if (projectRegistryImpl === null) {
           throw new Error('project registry is not initialized');
@@ -134,7 +289,19 @@ export async function run(): Promise<void> {
         params: input.params,
       });
 
-      return formatCodexCommandResult(input.method, result);
+      const projectConfig = projectConfigEntries.find((entry) => entry.projectInstanceId === input.projectInstanceId) ?? null;
+      return await formatCodexCommandResultWithFallback({
+        projectInstanceId: input.projectInstanceId,
+        method: input.method,
+        result,
+        executeCommand: async (projectInstanceId, commandInput) => {
+          return await projectRegistryImpl.executeCommand(projectInstanceId, commandInput);
+        },
+        threadListParams:
+          input.method === 'thread/read' && projectConfig?.cwd !== undefined
+            ? { cwd: projectConfig.cwd }
+            : {},
+      });
     },
   });
 
@@ -168,6 +335,7 @@ export async function run(): Promise<void> {
         title: 'Codex Bridge',
         version: '0.1.0',
       },
+      getModel: () => project.model,
       serviceName: project.serviceName,
       transport: project.transport,
       websocketUrl: project.websocketUrl,
@@ -252,6 +420,7 @@ export async function run(): Promise<void> {
         args: config.args,
         cwd: config.cwd,
         clientInfo: { name: 'codex-bridge', title: 'Codex Bridge', version: '0.1.0' },
+        getModel: () => config.model ?? projectConfigEntries.find((p) => p.projectInstanceId === projectInstanceId)?.model,
         serviceName: config.serviceName,
         transport: config.transport,
         websocketUrl: config.websocketUrl,
@@ -509,7 +678,8 @@ async function createFeishuWebSocketTransportFromRuntime(feishuRuntime: { appId:
         messageId: response.data?.message_id,
       };
     },
-    updateMessageFn: async ({ messageId, msgType, content }) => {
+    updateMessageFn: async ({ sessionId, messageId, msgType, content }) => {
+      void sessionId;
       void msgType;
       await patchFeishuMessageCard(restClient, {
         messageId,

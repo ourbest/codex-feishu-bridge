@@ -18,7 +18,7 @@ export interface LarkTransport {
   onEvent(handler: (event: LarkEventPayload) => void | Promise<void>): void;
   sendMessage(message: { sessionId: string; text: string }): Promise<LarkSendResult | void>;
   sendCard?(message: { sessionId: string; card: FeishuInteractiveCardMessage; fallbackText?: string }): Promise<LarkSendResult | void>;
-  updateCard?(message: { messageId: string; card: FeishuInteractiveCardMessage; fallbackText?: string }): Promise<void>;
+  updateCard?(message: { sessionId: string; messageId: string; card: FeishuInteractiveCardMessage; fallbackText?: string }): Promise<void>;
   sendReaction(message: OutboundReaction): Promise<void>;
   onCardAction?(handler: (event: LarkEventPayload) => void | Promise<void>): void;
   start?(): Promise<void>;
@@ -102,7 +102,7 @@ export class LarkAdapter {
     return normalizeSendResult(result);
   }
 
-  async updateCard(message: { messageId: string; card: FeishuInteractiveCardMessage; fallbackText?: string }): Promise<boolean> {
+  async updateCard(message: { sessionId: string; messageId: string; card: FeishuInteractiveCardMessage; fallbackText?: string }): Promise<boolean> {
     if (this.transport.updateCard === undefined) {
       return false;
     }

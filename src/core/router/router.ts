@@ -18,6 +18,10 @@ export class BridgeRouter {
     this.handlers.set(projectInstanceId, handler);
   }
 
+  hasProjectHandler(projectInstanceId: string): boolean {
+    return this.handlers.has(projectInstanceId);
+  }
+
   async routeInboundMessage(message: InboundMessage): Promise<OutboundMessage | null> {
     const projectInstanceId = await this.bindingService.getProjectBySession(message.sessionId);
     if (projectInstanceId === null) {

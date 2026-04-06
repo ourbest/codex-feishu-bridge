@@ -90,7 +90,7 @@ test('initializes codex app-server, starts a thread, and collects streamed agent
         method: 'thread/start',
         params: {
           approvalPolicy: 'on-request',
-          model: 'gpt-5.4',
+          model: 'gpt-5.4-mini',
           sandbox: 'workspace-write',
           serviceName: 'codex-bridge',
         },
@@ -99,9 +99,132 @@ test('initializes codex app-server, starts a thread, and collects streamed agent
         id: 2,
         method: 'turn/start',
         params: {
-          approvalPolicy: 'never',
+          approvalPolicy: 'on-request',
           input: [{ text: 'Summarize this repo.', type: 'text' }],
+          model: 'gpt-5.4-mini',
+          sandbox: 'workspace-write',
+          threadId: 'thr_123',
+        },
+      },
+    ],
+  );
+});
+
+test('reads the current model from a dynamic getter for each turn', async () => {
+  const writes: string[] = [];
+  const stdout = new PassThrough();
+  let currentModel = 'gpt-5.4';
+
+  const client = new CodexAppServerClient({
+    command: 'codex',
+    args: ['app-server'],
+    clientInfo: {
+      name: 'bridge-test',
+      title: 'Bridge Test',
+      version: '0.1.0',
+    },
+    getModel: () => currentModel,
+    spawnAppServer() {
+      let turnCount = 0;
+      return {
+        stdin: {
+          write(chunk: string) {
+            const text = String(chunk);
+            writes.push(text);
+
+            const payload = JSON.parse(text);
+            if (payload.method === 'initialize') {
+              stdout.write(`${JSON.stringify({ id: payload.id, result: {} })}\n`);
+            } else if (payload.method === 'thread/start') {
+              stdout.write(`${JSON.stringify({ id: payload.id, result: { thread: { id: 'thr_123' } } })}\n`);
+            } else if (payload.method === 'turn/start') {
+              turnCount += 1;
+              stdout.write(`${JSON.stringify({ id: payload.id, result: { turn: { id: `turn_${turnCount}` } } })}\n`);
+              stdout.write(
+                `${JSON.stringify({ method: 'item/agentMessage/delta', params: { itemId: `item-${turnCount}`, text: `reply-${turnCount}` } })}\n`,
+              );
+              stdout.write(
+                `${JSON.stringify({
+                  method: 'turn/completed',
+                  params: { threadId: 'thr_123', turnId: `turn_${turnCount}`, status: 'completed' },
+                })}\n`,
+              );
+            }
+
+            return true;
+          },
+        },
+        stdout,
+        stderr: new PassThrough(),
+        kill() {
+          return true;
+        },
+        on() {
+          return undefined;
+        },
+      };
+    },
+  });
+
+  const firstReply = await client.generateReply({
+    text: 'first prompt',
+  });
+  currentModel = 'gpt-5.4-mini';
+  const secondReply = await client.generateReply({
+    text: 'second prompt',
+  });
+
+  assert.equal(firstReply, 'reply-1');
+  assert.equal(secondReply, 'reply-2');
+  assert.deepEqual(
+    writes.map((entry) => JSON.parse(entry)),
+    [
+      {
+        id: 0,
+        method: 'initialize',
+        params: {
+          clientInfo: {
+            name: 'bridge-test',
+            title: 'Bridge Test',
+            version: '0.1.0',
+          },
+          capabilities: {
+            experimentalApi: true,
+          },
+        },
+      },
+      {
+        method: 'initialized',
+        params: {},
+      },
+      {
+        id: 1,
+        method: 'thread/start',
+        params: {
+          approvalPolicy: 'on-request',
+          model: 'gpt-5.4-mini',
+          sandbox: 'workspace-write',
+          serviceName: 'codex-bridge',
+        },
+      },
+      {
+        id: 2,
+        method: 'turn/start',
+        params: {
+          approvalPolicy: 'on-request',
+          input: [{ text: 'first prompt', type: 'text' }],
           model: 'gpt-5.4',
+          sandbox: 'workspace-write',
+          threadId: 'thr_123',
+        },
+      },
+      {
+        id: 3,
+        method: 'turn/start',
+        params: {
+          approvalPolicy: 'on-request',
+          input: [{ text: 'second prompt', type: 'text' }],
+          model: 'gpt-5.4-mini',
           sandbox: 'workspace-write',
           threadId: 'thr_123',
         },
@@ -527,9 +650,9 @@ test('resumes an existing thread before generating the next reply', async () => 
         id: 2,
         method: 'turn/start',
         params: {
-          approvalPolicy: 'never',
+          approvalPolicy: 'on-request',
           input: [{ text: 'Continue from the saved thread.', type: 'text' }],
-          model: 'gpt-5.4',
+          model: 'gpt-5.4-mini',
           sandbox: 'workspace-write',
           threadId: 'thr_123',
         },

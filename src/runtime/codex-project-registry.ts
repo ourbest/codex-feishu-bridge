@@ -29,6 +29,7 @@ export class CodexProjectRegistry {
             title: 'Codex Bridge',
             version: '0.1.0',
           },
+          getModel: () => project.model,
           serviceName: project.serviceName,
           transport: project.transport,
           websocketUrl: project.websocketUrl,

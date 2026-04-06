@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 export interface RuntimeEnvCodexConfig {
@@ -7,6 +7,7 @@ export interface RuntimeEnvCodexConfig {
   BRIDGE_CODEX_COMMAND?: string;
   BRIDGE_CODEX_ARGS_JSON?: string;
   BRIDGE_CODEX_CWD?: string;
+  BRIDGE_CODEX_MODEL?: string;
   BRIDGE_CODEX_SERVICE_NAME?: string;
   BRIDGE_CODEX_TRANSPORT?: string;
   BRIDGE_CODEX_WEBSOCKET_URL?: string;
@@ -17,14 +18,38 @@ export interface CodexRuntimeConfig {
   command: string;
   args: string[];
   cwd?: string;
+  model?: string;
   serviceName: string;
   transport: 'stdio' | 'websocket';
   websocketUrl?: string;
 }
 
+const SERIALIZED_CWD = Symbol('serializedCwd');
+
+type ProjectConfigEntryMetadata = {
+  [SERIALIZED_CWD]?: string;
+};
+
 export type CodexProjectRuntimeConfig = CodexRuntimeConfig;
 
-export type ProjectConfigEntry = CodexRuntimeConfig;
+export type ProjectConfigEntry = CodexRuntimeConfig & ProjectConfigEntryMetadata;
+
+export function cloneProjectConfigEntry(entry: ProjectConfigEntry): ProjectConfigEntry {
+  return createProjectConfigEntry(entry, readSerializedCwd(entry));
+}
+
+export function writeProjectsFile(filePath: string, projects: ProjectConfigEntry[]): void {
+  const snapshot = {
+    projects: projects.map((entry) => {
+      const serializedCwd = readSerializedCwd(entry);
+      return {
+        ...entry,
+        ...(serializedCwd !== undefined ? { cwd: serializedCwd } : {}),
+      };
+    }),
+  };
+  writeFileSync(filePath, `${JSON.stringify(snapshot, null, 2)}\n`, 'utf8');
+}
 
 export function resolvePathLikeInput(value: string | undefined, homeDir: string | undefined = process.env.HOME): string | undefined {
   const trimmed = value?.trim();
@@ -65,7 +90,10 @@ export function parseProjectConfigEntries(raw: string): ProjectConfigEntry[] | n
       typeof entry.projectInstanceId === 'string' &&
       entry.projectInstanceId.trim() !== ''
     )
-    .map((entry) => normalizeProjectConfig(entry));
+    .map((entry) => {
+      const normalized = normalizeProjectConfig(entry);
+      return createProjectConfigEntry(normalized, typeof entry.cwd === 'string' && entry.cwd.trim() !== '' ? entry.cwd : undefined);
+    });
 }
 
 export function loadProjectsFromFile(filePath: string): ProjectConfigEntry[] | null {
@@ -95,15 +123,35 @@ function parseArgs(value: string | undefined): string[] {
 
 function normalizeProjectConfig(input: Partial<CodexRuntimeConfig> & { projectInstanceId: string }): CodexRuntimeConfig {
   const transport = input.transport ?? 'websocket';
+  const model = input.model?.trim();
   return {
     projectInstanceId: input.projectInstanceId.trim(),
     command: input.command?.trim() || 'codex',
     args: input.args ?? ['app-server'],
     cwd: resolvePathLikeInput(input.cwd),
+    ...(model !== undefined && model !== '' ? { model } : {}),
     serviceName: input.serviceName?.trim() || 'codex-bridge',
     transport,
     websocketUrl: transport === 'stdio' ? undefined : input.websocketUrl?.trim() || 'ws://127.0.0.1:4000',
   };
+}
+
+function createProjectConfigEntry(entry: CodexRuntimeConfig, serializedCwd?: string): ProjectConfigEntry {
+  const projectConfig = { ...entry } as ProjectConfigEntry;
+  if (serializedCwd !== undefined) {
+    Object.defineProperty(projectConfig, SERIALIZED_CWD, {
+      value: serializedCwd,
+      enumerable: false,
+      configurable: true,
+      writable: true,
+    });
+  }
+
+  return projectConfig;
+}
+
+function readSerializedCwd(entry: ProjectConfigEntry): string | undefined {
+  return entry[SERIALIZED_CWD];
 }
 
 function parseProjectConfigs(value: string | undefined): CodexRuntimeConfig[] | null {
@@ -127,6 +175,7 @@ function parseProjectConfigs(value: string | undefined): CodexRuntimeConfig[] | 
       command: record.command?.trim() || 'codex',
       args: Array.isArray(record.args) ? record.args : ['app-server'],
       cwd: resolvePathLikeInput(record.cwd),
+      ...(record.model?.trim() ? { model: record.model.trim() } : {}),
       serviceName: record.serviceName?.trim() || 'codex-bridge',
       transport: record.transport ?? 'websocket',
       websocketUrl:
@@ -156,6 +205,7 @@ export function resolveCodexRuntimeConfigs(env: RuntimeEnvCodexConfig = process.
       command: env.BRIDGE_CODEX_COMMAND?.trim() || 'codex',
       args: parseArgs(env.BRIDGE_CODEX_ARGS_JSON),
       cwd: resolvePathLikeInput(env.BRIDGE_CODEX_CWD, env.HOME ?? process.env.HOME),
+      model: env.BRIDGE_CODEX_MODEL?.trim(),
       serviceName: env.BRIDGE_CODEX_SERVICE_NAME?.trim() || 'codex-bridge',
       transport: env.BRIDGE_CODEX_TRANSPORT?.trim() === 'stdio' ? 'stdio' : 'websocket',
       websocketUrl: resolveWebSocketUrl(env),
@@ -172,18 +222,22 @@ export function createCodexRuntimeConfig(input: {
   command?: string;
   args?: string[];
   cwd?: string;
+  model?: string;
   serviceName?: string;
   transport?: 'stdio' | 'websocket';
   websocketUrl?: string;
 }): CodexRuntimeConfig {
-  return {
+  const model = input.model?.trim();
+  const entry = {
     projectInstanceId: input.projectInstanceId.trim(),
     command: input.command?.trim() || 'codex',
     args: input.args ?? ['app-server'],
     cwd: resolvePathLikeInput(input.cwd),
+    ...(model !== undefined && model !== '' ? { model } : {}),
     serviceName: input.serviceName?.trim() || 'codex-bridge',
     transport: input.transport ?? 'websocket',
     websocketUrl:
       (input.transport ?? 'websocket') === 'stdio' ? undefined : input.websocketUrl?.trim() || 'ws://127.0.0.1:4000',
   };
+  return createProjectConfigEntry(entry, input.cwd?.trim() || undefined);
 }

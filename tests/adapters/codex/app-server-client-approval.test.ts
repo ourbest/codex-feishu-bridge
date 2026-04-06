@@ -123,7 +123,7 @@ test('surfaces app-server approval requests and can respond to them', async () =
         method: 'thread/start',
         params: {
           approvalPolicy: 'on-request',
-          model: 'gpt-5.4',
+          model: 'gpt-5.4-mini',
           sandbox: 'workspace-write',
           serviceName: 'codex-bridge',
         },
@@ -132,9 +132,9 @@ test('surfaces app-server approval requests and can respond to them', async () =
         id: 2,
         method: 'turn/start',
         params: {
-          approvalPolicy: 'never',
+          approvalPolicy: 'on-request',
           input: [{ text: 'Summarize this repo.', type: 'text' }],
-          model: 'gpt-5.4',
+          model: 'gpt-5.4-mini',
           sandbox: 'workspace-write',
           threadId: 'thr_123',
         },

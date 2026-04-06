@@ -73,8 +73,8 @@ test('boots the bridge runtime and forwards a routed reply back to lark', async 
 
   assert.deepEqual(reactions, []);
   assert.deepEqual(sentMessages, []);
-  assert.equal(sentCards.length, 1);
-  assert.equal(updatedCards.length, 1);
+  assert.equal(sentCards.length, 2);
+  assert.equal(updatedCards.length, 0);
   const processingCard = JSON.parse(sentCards[0].card.content) as {
     header?: { title?: { content?: string }; subtitle?: { content?: string } };
     body?: { elements?: Array<{ tag?: string; content?: string }> };
@@ -83,15 +83,11 @@ test('boots the bridge runtime and forwards a routed reply back to lark', async 
   assert.equal(processingCard.header?.subtitle?.content, 'Processing');
   assert.ok(processingCard.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('hello')));
 
-  assert.equal(updatedCards[0]?.messageId, 'card-1');
-  assert.match(updatedCards[0]?.fallbackText ?? '', /reply:hello/);
-
-  const card = JSON.parse(updatedCards[0]?.card.content ?? '{}') as {
+  const card = JSON.parse(sentCards[1]?.card.content ?? '{}') as {
     header?: { title?: { content?: string }; subtitle?: { content?: string } };
     body?: { elements?: Array<{ tag?: string; content?: string }> };
   };
   assert.equal(card.header?.title?.content, 'project-a');
-  assert.equal(card.header?.subtitle?.content, 'Completed');
   assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('reply:hello')));
   const footer = card.body?.elements?.find((element) => element.tag === 'markdown' && typeof element.content === 'string' && element.content.includes('PATH'));
   assert.ok(footer);
@@ -188,8 +184,8 @@ test('updates the same status card for waiting approval and reconnecting while a
   resolveReply?.({ text: 'reply:hello' });
   await inFlight;
 
-  assert.equal(sentCards.length, 1);
-  assert.equal(updatedCards.length, 3);
+  assert.equal(sentCards.length, 2);
+  assert.equal(updatedCards.length, 2);
 
   const waitingCard = JSON.parse(updatedCards[0]?.card.content ?? '{}') as {
     header?: { subtitle?: { content?: string } };
@@ -205,11 +201,11 @@ test('updates the same status card for waiting approval and reconnecting while a
   assert.equal(reconnectingCard.header?.subtitle?.content, 'Reconnecting');
   assert.ok(reconnectingCard.body?.elements?.some((element) => String(element.content).includes('Reconnecting... 2/5')));
 
-  const completedCard = JSON.parse(updatedCards.at(-1)?.card.content ?? '{}') as {
+  const completedCard = JSON.parse(sentCards.at(-1)?.card.content ?? '{}') as {
     header?: { subtitle?: { content?: string } };
     body?: { elements?: Array<{ tag?: string; content?: string }> };
   };
-  assert.equal(completedCard.header?.subtitle?.content, 'Completed');
+  assert.equal(completedCard.header?.title?.content, 'project-a');
   assert.ok(completedCard.body?.elements?.some((element) => String(element.content).includes('reply:hello')));
 
   await app.stop();
@@ -295,8 +291,8 @@ test('updates the in-flight status card with streamed reply text and activity su
   resolveReply?.({ text: 'final reply' });
   await inFlight;
 
-  assert.equal(sentCards.length, 1);
-  assert.equal(updatedCards.length, 3);
+  assert.equal(sentCards.length, 2);
+  assert.equal(updatedCards.length, 2);
 
   const progressCard = JSON.parse(updatedCards[1]?.card.content ?? '{}') as {
     header?: { subtitle?: { content?: string } };
@@ -307,11 +303,11 @@ test('updates the in-flight status card with streamed reply text and activity su
   assert.ok(progressCard.body?.elements?.some((element) => String(element.content).includes('reply so far')));
   assert.match(updatedCards[1]?.fallbackText ?? '', /reply so far/);
 
-  const completedCard = JSON.parse(updatedCards.at(-1)?.card.content ?? '{}') as {
+  const completedCard = JSON.parse(sentCards.at(-1)?.card.content ?? '{}') as {
     header?: { subtitle?: { content?: string } };
     body?: { elements?: Array<{ tag?: string; content?: string }> };
   };
-  assert.equal(completedCard.header?.subtitle?.content, 'Completed');
+  assert.equal(completedCard.header?.title?.content, 'project-a');
   assert.ok(completedCard.body?.elements?.some((element) => String(element.content).includes('final reply')));
 
   await app.stop();
@@ -485,15 +481,15 @@ test('reuses the same status card when sendCard returns a snake_case message_id'
   resolveReply?.({ text: 'final reply' });
   await inFlight;
 
-  assert.equal(sentCards.length, 1);
-  assert.equal(updatedCards.length, 2);
+  assert.equal(sentCards.length, 2);
+  assert.equal(updatedCards.length, 1);
   assert.equal(updatedCards[0]?.messageId, 'card-1');
-  assert.equal(updatedCards[1]?.messageId, 'card-1');
+  assert.match(sentCards[1]?.fallbackText ?? '', /final reply/);
 
   await app.stop();
 });
 
-test('handles //sessions using the supplied project registry', async () => {
+test('handles //status using the supplied project registry', async () => {
   const sentMessages: Array<{ sessionId: string; text: string }> = [];
   const sentCards: Array<{ sessionId: string; card: { msg_type: 'interactive'; content: string }; fallbackText?: string }> = [];
   const reactions: Array<{ targetMessageId: string; emojiType: string }> = [];
@@ -517,6 +513,16 @@ test('handles //sessions using the supplied project registry', async () => {
   const app = createBridgeApp({
     config: loadConfig({}),
     larkTransport: transport,
+    codexStatusProvider: async () => [
+      'Model: gpt-5.4-mini (reasoning medium, summaries auto)',
+      'Directory: ~/git/codex-bridge',
+      'Permissions: Full Access',
+      'Agents.md: AGENTS.md',
+      'Collaboration mode: Default',
+      'Session: 019d5e2f-9356-7903-9cdd-5ed89c556893',
+      '5h limit: [████████████████████] 99% left (resets 11:01)',
+      'Weekly limit: [█████░░░░░░░░░░░░░░░] 25% left (resets 18:26 on 8 Apr)',
+    ],
     projectRegistry: {
       async describeProject() {
         return {
@@ -538,7 +544,7 @@ test('handles //sessions using the supplied project registry', async () => {
   await eventHandler!({
     sessionId: 'session-a',
     messageId: 'message-2',
-    text: '//sessions',
+    text: '//status',
     senderId: 'user-a',
     timestamp: '2026-03-29T00:00:00.000Z',
   });
@@ -685,7 +691,7 @@ test('renders codex query command results as interactive cards', async () => {
   await eventHandler!({
     sessionId: 'session-a',
     messageId: 'message-app-list',
-    text: 'app/list',
+    text: '//app/list',
     senderId: 'user-a',
     timestamp: '2026-03-29T00:00:00.000Z',
   });
@@ -693,7 +699,7 @@ test('renders codex query command results as interactive cards', async () => {
   await eventHandler!({
     sessionId: 'session-a',
     messageId: 'message-thread-read',
-    text: 'thread/read thr_123',
+    text: '//thread/read thr_123',
     senderId: 'user-a',
     timestamp: '2026-03-29T00:00:01.000Z',
   });
@@ -1076,7 +1082,7 @@ test('renders //help as an interactive card for easier reading', async () => {
   };
   assert.equal(card.header?.title?.content, 'codex-bridge help');
   assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('//bind')));
-  assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('thread/start')));
+  assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('//new')));
 
   await app.stop();
 });
@@ -1558,6 +1564,16 @@ test('handles //reload projects by reloading a real projects file and reconcilin
   const app = createBridgeApp({
     config: loadConfig({}),
     larkTransport: transport,
+    codexStatusProvider: async () => [
+      'Model: gpt-5.4-mini (reasoning medium, summaries auto)',
+      'Directory: ~/git/codex-bridge',
+      'Permissions: Full Access',
+      'Agents.md: AGENTS.md',
+      'Collaboration mode: Default',
+      'Session: 019d5e2f-9356-7903-9cdd-5ed89c556893',
+      '5h limit: [████████████████████] 99% left (resets 11:01)',
+      'Weekly limit: [█████░░░░░░░░░░░░░░░] 25% left (resets 18:26 on 8 Apr)',
+    ],
     projectRegistry: {
       async describeProject(projectInstanceId) {
         return registry.describeProject(projectInstanceId);
@@ -1604,7 +1620,7 @@ test('handles //reload projects by reloading a real projects file and reconcilin
   await eventHandler!({
     sessionId: 'session-a',
     messageId: 'message-4',
-    text: '//sessions',
+    text: '//status',
     senderId: 'user-a',
     timestamp: '2026-03-29T00:00:01.000Z',
   });
@@ -1612,6 +1628,7 @@ test('handles //reload projects by reloading a real projects file and reconcilin
   assert.equal(sentMessages[0]?.text, undefined);
   assert.equal(sentCards.length, 2);
   assert.match(sentCards[1]?.fallbackText ?? '', /\[codex-bridge\] Bridge State:/);
+  assert.match(sentCards[1]?.fallbackText ?? '', /Model: gpt-5.4-mini \(reasoning medium, summaries auto\)/);
 
   await app.stop();
   rmSync(tempDir, { recursive: true, force: true });

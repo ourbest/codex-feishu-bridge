@@ -7,8 +7,8 @@ import type { LarkEventPayload, LarkTransport } from '../../src/adapters/lark/ad
 import { createCodexProjectSession } from '../../src/runtime/codex-project.ts';
 
 test('routes inbound lark messages through a codex project session', async () => {
-  const sentMessages: Array<{ sessionId: string; text: string }> = [];
-  const reactions: Array<{ targetMessageId: string; emojiType: string }> = [];
+  const sentCards: Array<{ sessionId: string; card: { msg_type: 'interactive'; content: string }; fallbackText?: string }> = [];
+  const updatedCards: Array<{ messageId: string; card: { msg_type: 'interactive'; content: string }; fallbackText?: string }> = [];
   let eventHandler: ((event: LarkEventPayload) => Promise<void> | void) | null = null;
   const codexInputs: string[] = [];
 
@@ -16,12 +16,17 @@ test('routes inbound lark messages through a codex project session', async () =>
     onEvent(handler) {
       eventHandler = handler;
     },
-    async sendMessage(message) {
-      sentMessages.push(message);
+    async sendMessage() {
+      return undefined;
     },
-    async sendReaction(message) {
-      reactions.push(message);
+    async sendCard(message) {
+      sentCards.push(message);
+      return { messageId: `card-${sentCards.length}` };
     },
+    async updateCard(message) {
+      updatedCards.push(message);
+    },
+    async sendReaction() {},
   };
 
   const app = createBridgeApp({
@@ -65,10 +70,9 @@ test('routes inbound lark messages through a codex project session', async () =>
   });
 
   assert.deepEqual(codexInputs, ['hello']);
-  assert.deepEqual(reactions, [
-    { targetMessageId: 'message-1', emojiType: 'THUMBSUP' },
-  ]);
-  assert.deepEqual(sentMessages, [{ sessionId: 'session-a', text: 'codex:hello' }]);
+  assert.equal(sentCards.length, 2);
+  assert.equal(updatedCards.length, 0);
+  assert.match(sentCards[1]?.fallbackText ?? '', /codex:hello/);
 
   await codexProject.stop();
   await app.stop();

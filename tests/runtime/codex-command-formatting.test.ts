@@ -140,3 +140,21 @@ test('formats empty lists explicitly', () => {
     'no items',
   ]);
 });
+
+test('formats review/start responses into a readable summary', () => {
+  const lines = formatCodexCommandResult('review/start', {
+    reviewThreadId: 'thr_review',
+    turn: {
+      id: 'turn_review_1',
+      status: 'completed',
+      items: [],
+    },
+  });
+
+  assert.deepEqual(lines, [
+    '[codex-bridge] review/start',
+    'reviewThreadId: thr_review',
+    'turnId: turn_review_1',
+    'status: completed',
+  ]);
+});

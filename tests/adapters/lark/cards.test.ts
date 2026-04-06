@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { buildApprovalCard, buildProjectReplyCard, buildStartupNotificationCard } from '../../../src/adapters/lark/cards.ts';
+import {
+  buildApprovalCard,
+  buildBridgeStatusCard,
+  buildProjectReplyCard,
+  buildStartupNotificationCard,
+  buildUnavailableProjectCard,
+} from '../../../src/adapters/lark/cards.ts';
 
 test('renders inline code spans as feishu-safe card markdown', () => {
   const replyCard = JSON.parse(
@@ -58,4 +64,47 @@ test('builds startup notification as an interactive markdown card', () => {
   assert.equal(card.header?.title?.content, 'codex-bridge');
   assert.equal(card.body?.elements?.[0]?.tag, 'markdown');
   assert.equal(card.body?.elements?.[0]?.content, '[codex-bridge] 已上线');
+});
+
+test('builds a processing bridge status card', () => {
+  const card = JSON.parse(
+    buildBridgeStatusCard({
+      projectTitle: 'cms-fe',
+      statusLabel: 'Processing',
+      bodyMarkdown: 'Handling `hello`.',
+      footerItems: [{ label: 'Transport', value: 'websocket' }],
+      template: 'blue',
+    }).content,
+  ) as {
+    header?: { title?: { content?: string }; subtitle?: { content?: string } };
+    body?: { elements?: Array<{ tag?: string; content?: string }> };
+  };
+
+  assert.equal(card.header?.title?.content, 'cms-fe');
+  assert.equal(card.header?.subtitle?.content, 'Processing');
+  assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('Handling `hello`')));
+  assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('Transport: websocket')));
+});
+
+test('builds an unavailable-project card with detailed diagnostics', () => {
+  const card = JSON.parse(
+    buildUnavailableProjectCard({
+      projectId: 'cms-fe',
+      lines: [
+        '[codex-bridge] bound project is unavailable: cms-fe',
+        'status: failed',
+        'reason: Reconnecting... 2/5',
+        'source: generateReply',
+      ],
+      footerItems: [{ label: 'Transport', value: 'websocket' }],
+    }).content,
+  ) as {
+    header?: { title?: { content?: string }; subtitle?: { content?: string } };
+    body?: { elements?: Array<{ tag?: string; content?: string }> };
+  };
+
+  assert.equal(card.header?.title?.content, 'cms-fe');
+  assert.equal(card.header?.subtitle?.content, 'Unavailable');
+  assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('Reconnecting... 2/5')));
+  assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('Transport: websocket')));
 });

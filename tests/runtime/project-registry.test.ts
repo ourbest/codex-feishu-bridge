@@ -59,10 +59,126 @@ test('maps codex notifications to project status updates', async () => {
   await client!.onNotification?.({ method: 'turn/completed', params: { turn: { status: 'failed' } } });
 
   assert.deepEqual(statuses, [
-    { projectInstanceId: 'project-a', status: 'working' },
-    { projectInstanceId: 'project-a', status: 'done' },
-    { projectInstanceId: 'project-a', status: 'failed' },
+    { projectInstanceId: 'project-a', status: 'working', reason: null, source: 'notification' },
+    { projectInstanceId: 'project-a', status: 'done', reason: null, source: 'notification' },
+    { projectInstanceId: 'project-a', status: 'failed', reason: null, source: 'notification' },
   ]);
+});
+
+test('forwards text deltas and activity summaries for active project sessions', async () => {
+  const progressUpdates: Array<{ projectInstanceId: string; sessionId: string; textDelta?: string; summary?: string }> = [];
+  let client: CodexProjectClient & {
+    onNotification?: ((message: { method: string; params?: Record<string, unknown> }) => void | Promise<void>) | null;
+    onTextDelta?: ((text: string) => void) | null;
+  } | null = null;
+
+  const registry = createProjectRegistry({
+    getProjectConfig: (id) => id === 'project-a' ? { projectInstanceId: 'project-a', websocketUrl: 'ws://localhost:4000', cwd: '/repo/project-a' } : null,
+    createClient: () => {
+      client = {
+        generateReply: async ({ text }) => `reply to ${text}`,
+        stop: async () => {},
+      };
+      return client;
+    },
+    onProgress: async (input) => {
+      progressUpdates.push(input);
+    },
+  });
+
+  await registry.onBindingChanged({ type: 'bound', projectId: 'project-a', sessionId: 'chat-1' });
+
+  assert.ok(client);
+  client!.onTextDelta?.('partial reply');
+  await client!.onNotification?.({
+    method: 'item/completed',
+    params: {
+      item: {
+        type: 'commandExecution',
+        command: 'npm test',
+      },
+    },
+  });
+
+  assert.deepEqual(progressUpdates, [
+    {
+      projectInstanceId: 'project-a',
+      sessionId: 'chat-1',
+      textDelta: 'partial reply',
+    },
+    {
+      projectInstanceId: 'project-a',
+      sessionId: 'chat-1',
+      summary: 'Completed command: npm test',
+    },
+  ]);
+});
+
+test('captures generateReply failures in project diagnostics', async () => {
+  const registry = createProjectRegistry({
+    getProjectConfig: (id) => id === 'project-a' ? { projectInstanceId: 'project-a', websocketUrl: 'ws://localhost:4000', cwd: '/repo/project-a' } : null,
+    createClient: () => ({
+      generateReply: async () => {
+        throw new Error('codex app-server disconnected');
+      },
+      stop: async () => {},
+    }),
+  });
+
+  await registry.onBindingChanged({ type: 'bound', projectId: 'project-a', sessionId: 'chat-1' });
+
+  const handler = registry.getHandler('project-a');
+  assert.ok(handler !== null);
+  const reply = await handler!({
+    projectInstanceId: 'project-a',
+    message: { text: 'hello' },
+  });
+
+  assert.equal(reply, null);
+  const diagnostics = await registry.getProjectDiagnostics('project-a');
+  assert.deepEqual(diagnostics, {
+    projectInstanceId: 'project-a',
+    status: 'failed',
+    reason: 'codex app-server disconnected',
+    source: 'generateReply',
+  });
+});
+
+test('captures failure reasons from codex notifications in project diagnostics', async () => {
+  let client: CodexProjectClient & {
+    onNotification?: ((message: { method: string; params?: Record<string, unknown> }) => void | Promise<void>) | null;
+  } | null = null;
+
+  const registry = createProjectRegistry({
+    getProjectConfig: (id) => id === 'project-a' ? { projectInstanceId: 'project-a', websocketUrl: 'ws://localhost:4000', cwd: '/repo/project-a' } : null,
+    createClient: () => {
+      client = {
+        generateReply: async ({ text }) => `reply to ${text}`,
+        stop: async () => {},
+      };
+      return client;
+    },
+  });
+
+  await registry.onBindingChanged({ type: 'bound', projectId: 'project-a', sessionId: 'chat-1' });
+
+  assert.ok(client);
+  await client!.onNotification?.({
+    method: 'error',
+    params: {
+      error: {
+        message: 'approval transport timed out',
+      },
+    },
+  });
+
+  const diagnostics = await registry.getProjectDiagnostics('project-a');
+  assert.deepEqual(diagnostics, {
+    projectInstanceId: 'project-a',
+    status: 'failed',
+    reason: 'approval transport timed out',
+    source: 'notification',
+  });
 });
 
 test('restores a persisted binding by resuming the last thread', async () => {

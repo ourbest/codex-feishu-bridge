@@ -61,6 +61,7 @@ export interface CodexAppServerClientOptions {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
   model?: string;
+  getModel?: () => string | undefined;
   serviceName?: string;
   transport?: 'stdio' | 'websocket';
   websocketUrl?: string;
@@ -102,6 +103,10 @@ export class CodexAppServerClient {
     this.activeTransport = options.transport ?? 'stdio';
   }
 
+  private resolveModel(defaultModel: string): string {
+    return this.options.getModel?.() ?? this.options.model ?? defaultModel;
+  }
+
   async generateReply(input: CodexGenerateReplyInput): Promise<string> {
     await this.ensureStarted();
     await this.ensureThread(input.cwd);
@@ -114,10 +119,10 @@ export class CodexAppServerClient {
     });
 
     await this.sendRequest('turn/start', {
-      approvalPolicy: 'never',
+      approvalPolicy: 'on-request',
       cwd: input.cwd ?? this.options.cwd,
       input: [{ type: 'text', text: input.text }],
-      model: this.options.model ?? 'gpt-5.4',
+      model: this.resolveModel('gpt-5.4-mini'),
       sandbox: 'workspace-write',
       threadId: this.threadId,
     });
@@ -135,7 +140,7 @@ export class CodexAppServerClient {
     const response = await this.sendRequest('thread/start', {
       approvalPolicy: 'on-request',
       cwd: input.cwd ?? this.options.cwd,
-      model: this.options.model ?? 'gpt-5.4-mini',
+      model: this.resolveModel('gpt-5.4-mini'),
       sandbox: 'workspace-write',
       personality: 'friendly',
       serviceName: this.options.serviceName ?? 'codex-bridge',
@@ -190,8 +195,16 @@ export class CodexAppServerClient {
   }
 
   private async ensureStarted(): Promise<void> {
-    if (this.process !== null || this.socket !== null) {
+    if (this.process !== null) {
       return;
+    }
+
+    if (this.socket !== null) {
+      if (this.isSocketOpen()) {
+        return;
+      }
+
+      this.handleConnectionClosed();
     }
 
     if (this.activeTransport === 'websocket') {
@@ -267,7 +280,7 @@ export class CodexAppServerClient {
     const response = await this.sendRequest('thread/start', {
       approvalPolicy: 'on-request',
       cwd,
-      model: this.options.model ?? 'gpt-5.4',
+      model: this.options.model ?? 'gpt-5.4-mini',
       sandbox: 'workspace-write',
       serviceName: this.options.serviceName ?? 'codex-bridge',
     });
@@ -309,6 +322,10 @@ export class CodexAppServerClient {
   private sendRaw(message: Record<string, unknown>): void {
     const payload = JSON.stringify(message);
     if (this.socket !== null) {
+      if (!this.isSocketOpen()) {
+        this.handleConnectionClosed();
+        throw new Error('Codex websocket connection closed');
+      }
       this.socket.send(payload);
       return;
     }
@@ -477,6 +494,10 @@ export class CodexAppServerClient {
     this.pendingReplyResolver = null;
     this.pendingReplyRejecter?.(error);
     this.pendingReplyRejecter = null;
+  }
+
+  private isSocketOpen(): boolean {
+    return this.socket !== null && this.socket.readyState === 1;
   }
 
   private readString(value: unknown, path: string[]): string | null {

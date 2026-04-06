@@ -7,6 +7,7 @@ export interface ProjectConfig {
   command: string;
   args: string[];
   cwd?: string;
+  model?: string;
   serviceName: string;
   transport: 'stdio' | 'websocket';
   websocketUrl?: string;
@@ -19,6 +20,14 @@ export interface ProjectRegistryOptions {
   onStatusChange?: (input: {
     projectInstanceId: string;
     status: 'working' | 'waiting_approval' | 'done' | 'failed';
+    reason?: string | null;
+    source?: ProjectDiagnostics['source'];
+  }) => void | Promise<void>;
+  onProgress?: (input: {
+    projectInstanceId: string;
+    sessionId: string;
+    textDelta?: string;
+    summary?: string;
   }) => void | Promise<void>;
   onServerRequest?: (input: {
     projectInstanceId: string;
@@ -42,6 +51,7 @@ export interface ProjectRegistry {
   getLastThread(projectInstanceId: string, sessionId: string): Promise<string | null>;
   getHandler(projectInstanceId: string): ((input: { projectInstanceId: string; message: { text: string } }) => Promise<{ text: string } | null>) | null;
   describeProject(projectInstanceId: string): Promise<ProjectState>;
+  getProjectDiagnostics(projectInstanceId: string): Promise<ProjectDiagnostics | null>;
   stop(): Promise<void>;
 }
 
@@ -53,15 +63,79 @@ export interface ProjectState {
   sessionCount: number;
 }
 
+export interface ProjectDiagnostics {
+  projectInstanceId: string;
+  status: 'working' | 'waiting_approval' | 'done' | 'failed';
+  reason: string | null;
+  source: 'notification' | 'generateReply' | 'restoreBinding' | 'startThread' | 'resumeThread';
+}
+
 export function createProjectRegistry(options: ProjectRegistryOptions): ProjectRegistry {
   // projectId -> { client, bindingCount, sessions: Set<string> }
   const activeProjects = new Map<
     string,
     { client: CodexProjectClient; bindingCount: number; sessions: Set<string>; config: ProjectConfig }
   >();
+  const diagnosticsByProjectId = new Map<string, ProjectDiagnostics>();
   const knownProjectIds = new Set<string>();
   let configuredProjectIds = new Set<string>();
   let hasReconciledConfigs = false;
+
+  function toErrorMessage(error: unknown): string {
+    if (error instanceof Error && error.message) {
+      return error.message;
+    }
+
+    if (typeof error === 'string' && error !== '') {
+      return error;
+    }
+
+    return 'unknown error';
+  }
+
+  function readFailureReason(method: string, params?: Record<string, unknown>): string | null {
+    if (method === 'error') {
+      const error = params?.error;
+      if (typeof error === 'object' && error !== null && 'message' in error) {
+        const message = String((error as { message?: unknown }).message ?? '').trim();
+        return message === '' ? null : message;
+      }
+    }
+
+    if (method === 'turn/completed') {
+      const turn = typeof params?.turn === 'object' && params.turn !== null ? params.turn : null;
+      if (turn !== null && 'error' in turn) {
+        const error = (turn as { error?: unknown }).error;
+        if (typeof error === 'object' && error !== null && 'message' in error) {
+          const message = String((error as { message?: unknown }).message ?? '').trim();
+          if (message !== '') {
+            return message;
+          }
+        }
+      }
+
+      if (typeof params?.error === 'object' && params.error !== null && 'message' in params.error) {
+        const message = String((params.error as { message?: unknown }).message ?? '').trim();
+        if (message !== '') {
+          return message;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  function setProjectDiagnostics(
+    projectInstanceId: string,
+    input: { status: 'working' | 'waiting_approval' | 'done' | 'failed'; reason?: string | null; source: ProjectDiagnostics['source'] },
+  ): void {
+    diagnosticsByProjectId.set(projectInstanceId, {
+      projectInstanceId,
+      status: input.status,
+      reason: input.reason ?? null,
+      source: input.source,
+    });
+  }
 
   function markProjectKnown(projectId: string): void {
     knownProjectIds.add(projectId);
@@ -88,14 +162,15 @@ export function createProjectRegistry(options: ProjectRegistryOptions): ProjectR
   }
 
   function attachStatusHandler(projectId: string, client: CodexProjectClient): void {
-    if (options.onStatusChange === undefined) {
-      return;
-    }
-
     const previousHandler = client.onNotification ?? null;
     client.onNotification = (message) => {
       if (previousHandler !== null) {
         void previousHandler(message);
+      }
+
+      const summary = summarizeProgressNotification(message.method, message.params);
+      if (summary !== null) {
+        emitProgress(projectId, { summary });
       }
 
       const status = readProjectStatus(message.method, message.params);
@@ -103,11 +178,81 @@ export function createProjectRegistry(options: ProjectRegistryOptions): ProjectR
         return;
       }
 
-      void options.onStatusChange?.({
-        projectInstanceId: projectId,
+      const reason = status === 'failed' ? readFailureReason(message.method, message.params) : null;
+      setProjectDiagnostics(projectId, {
         status,
+        reason,
+        source: 'notification',
       });
+
+      if (options.onStatusChange !== undefined) {
+        void options.onStatusChange({
+          projectInstanceId: projectId,
+          status,
+          reason,
+          source: 'notification',
+        });
+      }
     };
+  }
+
+  function attachTextDeltaHandler(projectId: string, client: CodexProjectClient): void {
+    const previousHandler = client.onTextDelta ?? null;
+    client.onTextDelta = (text) => {
+      previousHandler?.(text);
+      if (text !== '') {
+        emitProgress(projectId, { textDelta: text });
+      }
+    };
+  }
+
+  function emitProgress(
+    projectId: string,
+    input: { textDelta?: string; summary?: string },
+  ): void {
+    if (options.onProgress === undefined) {
+      return;
+    }
+
+    const entry = activeProjects.get(projectId);
+    if (entry === undefined) {
+      return;
+    }
+
+    for (const sessionId of entry.sessions) {
+      void options.onProgress({
+        projectInstanceId: projectId,
+        sessionId,
+        ...input,
+      });
+    }
+  }
+
+  function summarizeProgressNotification(method: string, params?: Record<string, unknown>): string | null {
+    if (method !== 'item/completed') {
+      return null;
+    }
+
+    const item = typeof params?.item === 'object' && params.item !== null ? params.item as Record<string, unknown> : null;
+    if (item === null) {
+      return null;
+    }
+
+    const type = typeof item.type === 'string' ? item.type : '';
+    if (type === 'agentMessage') {
+      return null;
+    }
+
+    const command = typeof item.command === 'string' ? item.command.trim() : '';
+    if (type === 'commandExecution' && command !== '') {
+      return `Completed command: ${command}`;
+    }
+
+    if (type !== '') {
+      return `Completed ${type}`;
+    }
+
+    return null;
   }
 
   function attachThreadChangedHandler(projectId: string, client: CodexProjectClient): void {
@@ -138,6 +283,7 @@ export function createProjectRegistry(options: ProjectRegistryOptions): ProjectR
     activeProjects.set(projectId, entry);
     attachServerRequestHandler(projectId, client);
     attachStatusHandler(projectId, client);
+    attachTextDeltaHandler(projectId, client);
     attachThreadChangedHandler(projectId, client);
 
     if (options.router) {
@@ -145,7 +291,12 @@ export function createProjectRegistry(options: ProjectRegistryOptions): ProjectR
         try {
           const text = await client.generateReply({ text: message.text });
           return { text };
-        } catch {
+        } catch (error) {
+          setProjectDiagnostics(projectId, {
+            status: 'failed',
+            reason: toErrorMessage(error),
+            source: 'generateReply',
+          });
           return null;
         }
       });
@@ -308,6 +459,11 @@ export function createProjectRegistry(options: ProjectRegistryOptions): ProjectR
                 await resumeThreadForEntry(event.projectId, entry, lastThread);
                 return;
               } catch (error) {
+                setProjectDiagnostics(event.projectId, {
+                  status: 'failed',
+                  reason: toErrorMessage(error),
+                  source: 'resumeThread',
+                });
                 if (!shouldFallbackToFreshThread(error)) {
                   throw error;
                 }
@@ -317,7 +473,16 @@ export function createProjectRegistry(options: ProjectRegistryOptions): ProjectR
         }
 
         if ((created || isNewSession) && entry.client.startThread !== undefined) {
-          await startThreadForEntry(event.projectId, entry, { cwd: entry.config.cwd, force: true });
+          try {
+            await startThreadForEntry(event.projectId, entry, { cwd: entry.config.cwd, force: true });
+          } catch (error) {
+            setProjectDiagnostics(event.projectId, {
+              status: 'failed',
+              reason: toErrorMessage(error),
+              source: 'startThread',
+            });
+            throw error;
+          }
         }
       }
 
@@ -353,7 +518,16 @@ export function createProjectRegistry(options: ProjectRegistryOptions): ProjectR
     },
 
     async restoreBinding(projectInstanceId: string, sessionId: string): Promise<void> {
-      await this.onBindingChanged({ type: 'bound', projectId: projectInstanceId, sessionId }, { restore: true });
+      try {
+        await this.onBindingChanged({ type: 'bound', projectId: projectInstanceId, sessionId }, { restore: true });
+      } catch (error) {
+        setProjectDiagnostics(projectInstanceId, {
+          status: 'failed',
+          reason: toErrorMessage(error),
+          source: 'restoreBinding',
+        });
+        throw error;
+      }
     },
 
     async startThread(projectInstanceId: string, threadOptions?: { cwd?: string; force?: boolean }): Promise<string> {
@@ -373,7 +547,12 @@ export function createProjectRegistry(options: ProjectRegistryOptions): ProjectR
         try {
           const text = await entry.client.generateReply({ text: message.text });
           return { text };
-        } catch {
+        } catch (error) {
+          setProjectDiagnostics(projectInstanceId, {
+            status: 'failed',
+            reason: toErrorMessage(error),
+            source: 'generateReply',
+          });
           return null;
         }
       };
@@ -431,6 +610,10 @@ export function createProjectRegistry(options: ProjectRegistryOptions): ProjectR
         removed: knownProjectIds.has(projectInstanceId) && !configured,
         sessionCount: active?.sessions.size ?? 0,
       };
+    },
+
+    async getProjectDiagnostics(projectInstanceId: string): Promise<ProjectDiagnostics | null> {
+      return diagnosticsByProjectId.get(projectInstanceId) ?? null;
     },
 
     async stop() {

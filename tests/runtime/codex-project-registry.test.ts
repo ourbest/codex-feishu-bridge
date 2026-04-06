@@ -7,8 +7,8 @@ import type { LarkEventPayload, LarkTransport } from '../../src/adapters/lark/ad
 import { createCodexProjectRegistry } from '../../src/runtime/codex-project-registry.ts';
 
 test('routes each bound session to its matching codex project client', async () => {
-  const sentMessages: Array<{ sessionId: string; text: string }> = [];
-  const reactions: Array<{ targetMessageId: string; emojiType: string }> = [];
+  const sentCards: Array<{ sessionId: string; card: { msg_type: 'interactive'; content: string }; fallbackText?: string }> = [];
+  const updatedCards: Array<{ messageId: string; card: { msg_type: 'interactive'; content: string }; fallbackText?: string }> = [];
   let eventHandler: ((event: LarkEventPayload) => Promise<void> | void) | null = null;
   const projectAInputs: string[] = [];
   const projectBInputs: string[] = [];
@@ -17,12 +17,17 @@ test('routes each bound session to its matching codex project client', async () 
     onEvent(handler) {
       eventHandler = handler;
     },
-    async sendMessage(message) {
-      sentMessages.push(message);
+    async sendMessage() {
+      return undefined;
     },
-    async sendReaction(message) {
-      reactions.push(message);
+    async sendCard(message) {
+      sentCards.push(message);
+      return { messageId: `card-${sentCards.length}` };
     },
+    async updateCard(message) {
+      updatedCards.push(message);
+    },
+    async sendReaction() {},
   };
 
   const app = createBridgeApp({
@@ -88,14 +93,10 @@ test('routes each bound session to its matching codex project client', async () 
 
   assert.deepEqual(projectAInputs, ['hello']);
   assert.deepEqual(projectBInputs, ['world']);
-  assert.deepEqual(reactions, [
-    { targetMessageId: 'message-1', emojiType: 'THUMBSUP' },
-    { targetMessageId: 'message-2', emojiType: 'THUMBSUP' },
-  ]);
-  assert.deepEqual(sentMessages, [
-    { sessionId: 'session-a', text: 'a:hello' },
-    { sessionId: 'session-b', text: 'b:world' },
-  ]);
+  assert.equal(sentCards.length, 4);
+  assert.equal(updatedCards.length, 0);
+  assert.match(sentCards[1]?.fallbackText ?? '', /a:hello/);
+  assert.match(sentCards[3]?.fallbackText ?? '', /b:world/);
 
   await registry.stop();
   await app.stop();

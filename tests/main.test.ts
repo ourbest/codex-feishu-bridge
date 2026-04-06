@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { patchFeishuMessageCard } from '../src/main.ts';
+import { formatCodexCommandResultWithFallback, patchFeishuMessageCard } from '../src/main.ts';
 
 test('patchFeishuMessageCard sends a PATCH request without msg_type', async () => {
   const calls: Array<{
@@ -43,4 +43,55 @@ test('patchFeishuMessageCard sends a PATCH request without msg_type', async () =
     },
   ]);
   assert.equal('msg_type' in (calls[0]?.data ?? {}), false);
+});
+
+test('formatCodexCommandResultWithFallback enriches sparse thread/read results from thread/list', async () => {
+  const calls: Array<{ projectInstanceId: string; method: string; params: Record<string, unknown> }> = [];
+
+  const lines = await formatCodexCommandResultWithFallback({
+    projectInstanceId: 'project-a',
+    method: 'thread/read',
+    result: { id: 'thr_123' },
+    executeCommand: async (projectInstanceId, input) => {
+      calls.push({
+        projectInstanceId,
+        method: input.method,
+        params: input.params,
+      });
+
+      assert.equal(projectInstanceId, 'project-a');
+      assert.deepEqual(input, {
+        method: 'thread/list',
+        params: {},
+      });
+
+      return {
+        threads: [
+          {
+            id: 'thr_123',
+            preview: 'hello world',
+            status: { type: 'loaded' },
+            cwd: '/tmp/project',
+            source: 'vscode',
+          },
+        ],
+      };
+    },
+  });
+
+  assert.deepEqual(calls, [
+    {
+      projectInstanceId: 'project-a',
+      method: 'thread/list',
+      params: {},
+    },
+  ]);
+  assert.deepEqual(lines, [
+    '[codex-bridge] thread/read',
+    'id: thr_123',
+    'preview: hello world',
+    'status: loaded',
+    'cwd: /tmp/project',
+    'source: vscode',
+  ]);
 });

@@ -22,6 +22,12 @@ export interface FeishuWebSocketTransportOptions {
     receiveId: string;
     msgType: string;
     content: string | object;
+  }) => Promise<{ messageId?: string } | void>;
+  updateMessageFn?: (opts: {
+    sessionId: string;
+    messageId: string;
+    msgType: string;
+    content: string | object;
   }) => Promise<void>;
   sendReactionFn: (opts: {
     messageId: string;
@@ -167,31 +173,66 @@ export function createFeishuWebSocketTransport(options: FeishuWebSocketTransport
       return started && !stopped;
     },
     async sendMessage(message) {
-      enqueueMessage(message.sessionId, async () => {
-        options.onSend?.(message);
-        const payload = isMarkdown(message.text)
-          ? buildFeishuPostMessage(message.text)
-          : {
-              msg_type: 'text',
-              content: JSON.stringify({ text: message.text }),
-            };
+      return await new Promise<{ messageId?: string } | void>((resolve, reject) => {
+        enqueueMessage(message.sessionId, async () => {
+          try {
+            options.onSend?.(message);
+            const payload = isMarkdown(message.text)
+              ? buildFeishuPostMessage(message.text)
+              : {
+                  msg_type: 'text',
+                  content: JSON.stringify({ text: message.text }),
+                };
 
-        console.log(`[feishu] sending ${payload.msg_type}, session=${message.sessionId}`);
-        await options.sendMessageFn({
-          receiveId: message.sessionId,
-          msgType: payload.msg_type,
-          content: payload.content,
+            console.log(`[feishu] sending ${payload.msg_type}, session=${message.sessionId}`);
+            const result = await options.sendMessageFn({
+              receiveId: message.sessionId,
+              msgType: payload.msg_type,
+              content: payload.content,
+            });
+            resolve(result);
+          } catch (error) {
+            reject(error);
+          }
         });
       });
     },
     async sendCard(message) {
-      enqueueMessage(message.sessionId, async () => {
-        options.onSendCard?.(message);
-        console.log(`[feishu] sending interactive, session=${message.sessionId}`);
-        await options.sendMessageFn({
-          receiveId: message.sessionId,
-          msgType: 'interactive',
-          content: message.card.content,
+      return await new Promise<{ messageId?: string } | void>((resolve, reject) => {
+        enqueueMessage(message.sessionId, async () => {
+          try {
+            options.onSendCard?.(message);
+            console.log(`[feishu] sending interactive, session=${message.sessionId}`);
+            const result = await options.sendMessageFn({
+              receiveId: message.sessionId,
+              msgType: 'interactive',
+              content: message.card.content,
+            });
+            resolve(result);
+          } catch (error) {
+            reject(error);
+          }
+        });
+      });
+    },
+    async updateCard(message) {
+      if (options.updateMessageFn === undefined) {
+        return;
+      }
+
+      await new Promise<void>((resolve, reject) => {
+        enqueueMessage(message.sessionId, async () => {
+          try {
+            await options.updateMessageFn({
+              sessionId: message.sessionId,
+              messageId: message.messageId,
+              msgType: 'interactive',
+              content: message.card.content,
+            });
+            resolve();
+          } catch (error) {
+            reject(error);
+          }
         });
       });
     },

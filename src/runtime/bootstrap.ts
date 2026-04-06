@@ -50,11 +50,13 @@ export function resolveProjectsFilePath(env: RuntimeEnv = process.env): string {
 export function createLocalDevLarkTransport(options?: {
   onSend?: (message: { sessionId: string; text: string }) => void;
   onSendCard?: (message: { sessionId: string; card: { msg_type: 'interactive'; content: string }; fallbackText?: string }) => void;
+  onUpdateCard?: (message: { sessionId: string; messageId: string; card: { msg_type: 'interactive'; content: string }; fallbackText?: string }) => void;
   onReact?: (message: { targetMessageId: string; emojiType: string }) => void;
   onEmit?: (event: LarkEventPayload) => void;
 }): LocalDevLarkTransport {
   let eventHandler: ((event: LarkEventPayload) => void | Promise<void>) | null = null;
   let cardActionHandler: ((event: LarkEventPayload) => void | Promise<void>) | null = null;
+  let nextMessageId = 1;
 
   return {
     onEvent(handler) {
@@ -62,6 +64,7 @@ export function createLocalDevLarkTransport(options?: {
     },
     async sendMessage(message) {
       options?.onSend?.(message);
+      return { messageId: `local-msg-${nextMessageId++}` };
     },
     async sendCard(message) {
       options?.onSendCard?.({
@@ -69,6 +72,10 @@ export function createLocalDevLarkTransport(options?: {
         card: message.card,
         fallbackText: message.fallbackText,
       });
+      return { messageId: `local-card-${nextMessageId++}` };
+    },
+    async updateCard(message) {
+      options?.onUpdateCard?.(message);
     },
     async sendReaction(message) {
       options?.onReact?.(message);

@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
 
-import { resolveCodexRuntimeConfig, resolveCodexRuntimeConfigs } from '../../src/runtime/codex-config.ts';
+import { loadProjectsFromFile, resolveCodexRuntimeConfig, resolveCodexRuntimeConfigs, writeProjectsFile } from '../../src/runtime/codex-config.ts';
 import { createProjectConfigWatcher } from '../../src/runtime/project-config-watcher.ts';
 
 test('returns null when codex runtime is not enabled', () => {
@@ -34,12 +34,14 @@ test('resolves websocket transport from environment override', () => {
       BRIDGE_CODEX_PROJECT_INSTANCE_ID: 'project-a',
       BRIDGE_CODEX_TRANSPORT: 'websocket',
       BRIDGE_CODEX_WEBSOCKET_URL: 'ws://127.0.0.1:4567',
+      BRIDGE_CODEX_MODEL: 'gpt-5.4-mini',
     }),
     {
       projectInstanceId: 'project-a',
       command: 'codex',
       args: ['app-server'],
       cwd: undefined,
+      model: 'gpt-5.4-mini',
       serviceName: 'codex-bridge',
       transport: 'websocket',
       websocketUrl: 'ws://127.0.0.1:4567',
@@ -100,6 +102,7 @@ test('loads stdio project configs from projects file shape', () => {
             command: 'codex',
             args: ['app-server'],
             cwd: '/repo/a',
+            model: 'gpt-5.4',
             serviceName: 'codex-bridge-a',
           },
         ],
@@ -118,6 +121,7 @@ test('loads stdio project configs from projects file shape', () => {
         command: 'codex',
         args: ['app-server'],
         cwd: '/repo/a',
+        model: 'gpt-5.4',
         serviceName: 'codex-bridge-a',
       },
     ]),
@@ -127,6 +131,7 @@ test('loads stdio project configs from projects file shape', () => {
       command: 'codex',
       args: ['app-server'],
       cwd: '/repo/a',
+      model: 'gpt-5.4',
       serviceName: 'codex-bridge-a',
       transport: 'stdio',
       websocketUrl: undefined,
@@ -134,6 +139,115 @@ test('loads stdio project configs from projects file shape', () => {
   ]);
 
   rmSync(tempDir, { recursive: true, force: true });
+});
+
+test('writes projects file snapshots in the same shape they are read from', () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'codex-bridge-projects-'));
+  const filePath = join(tempDir, 'projects.json');
+
+  writeProjectsFile(filePath, [
+    {
+      projectInstanceId: 'project-a',
+      command: 'codex',
+      args: ['app-server'],
+      cwd: '/repo/a',
+      model: 'gpt-5.4-mini',
+      serviceName: 'codex-bridge-a',
+      transport: 'websocket',
+      websocketUrl: 'ws://127.0.0.1:4000',
+    },
+  ]);
+
+  assert.deepEqual(
+    JSON.parse(readFileSync(filePath, 'utf8')),
+    {
+      projects: [
+        {
+          projectInstanceId: 'project-a',
+          command: 'codex',
+          args: ['app-server'],
+          cwd: '/repo/a',
+          model: 'gpt-5.4-mini',
+          serviceName: 'codex-bridge-a',
+          transport: 'websocket',
+          websocketUrl: 'ws://127.0.0.1:4000',
+        },
+      ],
+    },
+  );
+
+  rmSync(tempDir, { recursive: true, force: true });
+});
+
+test('preserves the original cwd text when rewriting loaded projects', () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'codex-bridge-projects-'));
+  const filePath = join(tempDir, 'projects.json');
+  const originalHome = process.env.HOME;
+
+  try {
+    process.env.HOME = '/Users/yonghui';
+    writeFileSync(
+      filePath,
+      `${JSON.stringify(
+        {
+          projects: [
+            {
+              projectInstanceId: 'project-a',
+              command: 'codex',
+              args: ['app-server'],
+              cwd: '~/workspace/codex-bridge',
+              serviceName: 'codex-bridge',
+              transport: 'websocket',
+              websocketUrl: 'ws://127.0.0.1:4000',
+            },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+      'utf8',
+    );
+
+    const projects = loadProjectsFromFile(filePath);
+
+    assert.deepEqual(projects, [
+      {
+        projectInstanceId: 'project-a',
+        command: 'codex',
+        args: ['app-server'],
+        cwd: '/Users/yonghui/workspace/codex-bridge',
+        serviceName: 'codex-bridge',
+        transport: 'websocket',
+        websocketUrl: 'ws://127.0.0.1:4000',
+      },
+    ]);
+
+    if (projects === null) {
+      assert.fail('expected projects to load');
+    }
+
+    writeProjectsFile(filePath, projects);
+
+    assert.deepEqual(
+      JSON.parse(readFileSync(filePath, 'utf8')),
+      {
+        projects: [
+          {
+            projectInstanceId: 'project-a',
+            command: 'codex',
+            args: ['app-server'],
+            cwd: '~/workspace/codex-bridge',
+            serviceName: 'codex-bridge',
+            transport: 'websocket',
+            websocketUrl: 'ws://127.0.0.1:4000',
+          },
+        ],
+      },
+    );
+  } finally {
+    process.env.HOME = originalHome;
+    rmSync(tempDir, { recursive: true, force: true });
+  }
 });
 
 test('expands tilde cwd values from project config files', () => {
