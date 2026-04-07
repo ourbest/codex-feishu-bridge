@@ -78,7 +78,7 @@ export class ClaudeCodeClient implements CodexProjectClient {
 
   constructor(options: ClaudeCodeClientOptions) {
     this.command = options.command ?? 'claude';
-    this.args = options.args ?? ['--output-format', 'stream-json', '--input-format', 'stream-json', '--permission-prompt-tool', 'stdio', '--verbose'];
+    this.args = options.args ?? ['--output-format', 'stream-json', '--input-format', 'stream-json', '--permission-prompt-tool', 'stdio'];
     this.cwd = options.cwd;
     this.env = { ...process.env, ...options.env };
     this.onTextDelta = options.onTextDelta ?? null;
@@ -101,6 +101,9 @@ export class ClaudeCodeClient implements CodexProjectClient {
         stdio: ['pipe', 'pipe', 'pipe'],
       });
 
+      // Mark stdin as ready immediately - process is spawned
+      this.stdinReady = true;
+
       this.proc.stdout?.setEncoding('utf8');
       this.proc.stderr?.setEncoding('utf8');
 
@@ -118,8 +121,8 @@ export class ClaudeCodeClient implements CodexProjectClient {
       });
 
       this.proc.stderr?.on('data', (chunk: string) => {
-        // Claude Code outputs logs to stderr - can be ignored or logged
-        console.error(`[claude-code] ${chunk.trim()}`);
+        // Log stderr for debugging - may contain Claude Code logs/warnings
+        console.log(`[claude-code:stderr] ${chunk.trim()}`);
       });
 
       this.proc.on('error', (err) => {
@@ -132,20 +135,20 @@ export class ClaudeCodeClient implements CodexProjectClient {
         this.proc = null;
       });
 
-      // Wait for stdin to be ready
+      // Wait for initialization - give Claude Code time to start up
       const checkReady = () => {
         if (this.stdinReady) {
           resolve();
         } else {
-          setTimeout(checkReady, 10);
+          setTimeout(checkReady, 50);
         }
       };
       checkReady();
 
-      // Timeout after 10 seconds
+      // Timeout after 30 seconds for slower startup
       setTimeout(() => {
         if (!this.initialized) {
-          reject(new Error('Claude Code initialization timeout'));
+          reject(new Error('Claude Code initialization timeout (cwd=' + this.cwd + ')'));
         }
       }, 10000);
     });
@@ -175,6 +178,10 @@ export class ClaudeCodeClient implements CodexProjectClient {
           this.onNotification?.({ method: 'system/init', params: { session_id: msg.session_id, tools: msg.message?.content } });
         } else if (msg.subtype === 'status') {
           this.onNotification?.({ method: 'system/status', params: { permissionMode: msg.request?.mode } });
+        } else if (msg.subtype === 'hook_started' || msg.subtype === 'hook_response') {
+          // Hook events are informational - don't affect initialization
+          // stdin is ready once process spawns, even before hooks complete
+          this.stdinReady = true;
         }
         break;
 
@@ -182,6 +189,7 @@ export class ClaudeCodeClient implements CodexProjectClient {
         if (msg.message?.content) {
           for (const block of msg.message.content) {
             if (block.type === 'text' && block.text) {
+              console.log(`[claude-code] text delta: "${block.text}"`);
               this.replyBuffer += block.text;
               this.onTextDelta?.(block.text);
             } else if (block.type === 'thinking' && block.thinking) {
@@ -204,12 +212,14 @@ export class ClaudeCodeClient implements CodexProjectClient {
         break;
 
       case 'result':
+        console.log(`[claude-code] result: subtype=${msg.subtype}, result="${msg.result}"`);
         if (msg.subtype === 'success' || msg.subtype === 'error_during_execution' || msg.subtype === 'error_max_turns') {
           if (msg.is_error || msg.subtype === 'error_during_execution' || msg.subtype === 'error_max_turns') {
             const error = new Error(msg.result ?? 'Execution failed');
             this.pendingReplyRejecter?.(error);
           } else {
             // Final result text - already streamed via onTextDelta
+            console.log(`[claude-code] resolving reply with buffer="${this.replyBuffer}"`);
             this.onTurnCompleted?.();
             this.pendingReplyResolver?.(this.replyBuffer || (msg.result ?? ''));
           }
@@ -236,7 +246,11 @@ export class ClaudeCodeClient implements CodexProjectClient {
           };
 
           // Forward to handler - the handler will call respondToServerRequest which sends control_response
-          void this.onServerRequest(request);
+          try {
+            void this.onServerRequest(request);
+          } catch (err) {
+            console.error(`[claude-code] onServerRequest error: ${err}`);
+          }
         }
         break;
 
@@ -259,10 +273,15 @@ export class ClaudeCodeClient implements CodexProjectClient {
   }
 
   private sendMessage(msg: object): void {
-    if (!this.proc?.stdin) {
-      throw new Error('Process stdin not available');
+    if (!this.proc?.stdin || !this.stdinReady) {
+      console.warn(`[claude-code] stdin not ready, cannot send: ${JSON.stringify(msg).slice(0, 100)}`);
+      return;
     }
-    this.proc.stdin.write(JSON.stringify(msg) + '\n');
+    try {
+      this.proc.stdin.write(JSON.stringify(msg) + '\n');
+    } catch (err) {
+      console.error(`[claude-code] write error: ${err}`);
+    }
   }
 
   async generateReply(input: { text: string; cwd?: string }): Promise<string> {
@@ -347,16 +366,20 @@ export class ClaudeCodeClient implements CodexProjectClient {
       }
     }
 
-    this.sendMessage({
-      type: 'control_response',
-      response: {
-        subtype: 'success',
-        request_id: String(requestId),
+    try {
+      this.sendMessage({
+        type: 'control_response',
         response: {
-          behavior,
-          ...(message !== undefined ? { message } : {}),
+          subtype: 'success',
+          request_id: String(requestId),
+          response: {
+            behavior,
+            ...(message !== undefined ? { message } : {}),
+          },
         },
-      },
-    });
+      });
+    } catch (err) {
+      console.error(`[claude-code] failed to send control_response: ${err}`);
+    }
   }
 }
