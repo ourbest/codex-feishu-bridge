@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { CodexProjectClient } from '../../runtime/codex-project.ts';
+import type { CodexProjectClient } from '../../runtime/codex-project.ts';
 import type { CodexServerRequest } from '../codex/app-server-client.ts';
 
 export interface ClaudeCodeClientOptions {
