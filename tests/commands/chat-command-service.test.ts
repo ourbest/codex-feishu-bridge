@@ -484,6 +484,9 @@ test('rejects bare codex commands without the // prefix', async () => {
     '  //bind <projectId>  - bind this chat to a project',
     '  //unbind            - unbind this chat',
     '  //list              - show current binding',
+    '  //projects          - list all projects',
+    '  //providers         - list providers for the bound project',
+    '  //provider <name>   - switch the active provider',
     '  //new               - start a new codex thread for this chat',
     '  //status            - show bridge and codex state',
     '  //read <path>       - read a project file as a card',
@@ -502,6 +505,157 @@ test('rejects bare codex commands without the // prefix', async () => {
     '  //thread/list       - list codex threads',
     '  //thread/read <id>  - inspect a codex thread',
     '  //review            - review the current working tree',
+  ]);
+});
+
+test('lists projects with //projects', async () => {
+  const bindingService = createBindingService();
+  const service = createChatCommandService({
+    bindingService,
+    projectRegistry: {
+      async describeProject() {
+        return {
+          projectInstanceId: 'project-a',
+          configured: true,
+          active: true,
+          removed: false,
+          sessionCount: 1,
+        };
+      },
+      async listProjects() {
+        return [
+          {
+            projectInstanceId: 'project-a',
+            cwd: '/repo/project-a',
+            source: 'config',
+            activeProvider: 'codex',
+            providers: [
+              { provider: 'codex', transport: 'stdio' },
+              { provider: 'qwen', transport: 'stdio' },
+            ],
+            configured: true,
+            active: true,
+            removed: false,
+          },
+          {
+            projectInstanceId: 'project-b',
+            cwd: '/repo/project-b',
+            source: 'root',
+            activeProvider: 'qwen',
+            providers: [
+              { provider: 'codex', transport: 'stdio' },
+              { provider: 'cc', transport: 'stdio' },
+              { provider: 'qwen', transport: 'stdio' },
+            ],
+            configured: true,
+            active: false,
+            removed: false,
+          },
+        ];
+      },
+    },
+  });
+
+  const lines = await service.execute({
+    sessionId: 'chat-a',
+    senderId: 'user-a',
+    text: '//projects',
+  });
+
+  assert.deepEqual(lines, [
+    '[codex-bridge] projects:',
+    '  - project-a',
+    '    cwd: /repo/project-a',
+    '    source: config',
+    '    active provider: codex',
+    '    providers: codex, qwen',
+    '    configured: yes',
+    '    active: yes',
+    '    removed: no',
+    '  - project-b',
+    '    cwd: /repo/project-b',
+    '    source: root',
+    '    active provider: qwen',
+    '    providers: codex, cc, qwen',
+    '    configured: yes',
+    '    active: no',
+    '    removed: no',
+  ]);
+});
+
+test('lists and switches providers for the bound project', async () => {
+  const bindingService = createBindingService();
+  const setActiveCalls: Array<{ projectInstanceId: string; provider: string }> = [];
+  await bindingService.bindProjectToSession('project-a', 'chat-a');
+
+  const service = createChatCommandService({
+    bindingService,
+    projectRegistry: {
+      async describeProject() {
+        return {
+          projectInstanceId: 'project-a',
+          configured: true,
+          active: true,
+          removed: false,
+          sessionCount: 1,
+        };
+      },
+      async getProjectConfig(projectInstanceId: string) {
+        return projectInstanceId === 'project-a'
+          ? {
+              projectInstanceId: 'project-a',
+              cwd: '/repo/project-a',
+              activeProvider: 'codex',
+              providers: [
+                { provider: 'codex', transport: 'stdio' },
+                { provider: 'cc', transport: 'stdio' },
+                { provider: 'qwen', transport: 'stdio' },
+              ],
+            }
+          : null;
+      },
+      async listProjectProviders(projectInstanceId: string) {
+        return projectInstanceId === 'project-a'
+          ? [
+              { provider: 'codex', transport: 'stdio', started: true, active: true },
+              { provider: 'cc', transport: 'stdio', started: false, active: false },
+              { provider: 'qwen', transport: 'stdio', started: true, active: false },
+            ]
+          : [];
+      },
+      async getActiveProvider(projectInstanceId: string) {
+        return projectInstanceId === 'project-a' ? 'codex' : null;
+      },
+      async setActiveProvider(projectInstanceId: string, provider: 'codex' | 'cc' | 'qwen') {
+        setActiveCalls.push({ projectInstanceId, provider });
+      },
+    },
+  });
+
+  const providersLines = await service.execute({
+    sessionId: 'chat-a',
+    senderId: 'user-a',
+    text: '//providers',
+  });
+
+  const switchLines = await service.execute({
+    sessionId: 'chat-a',
+    senderId: 'user-a',
+    text: '//provider qwen',
+  });
+
+  assert.deepEqual(providersLines, [
+    '[codex-bridge] providers for project-a:',
+    '  - codex | transport=stdio | active | started',
+    '  - cc | transport=stdio | stopped',
+    '  - qwen | transport=stdio | started',
+  ]);
+  assert.deepEqual(switchLines, ['[codex-bridge] active provider for project-a set to qwen']);
+  assert.deepEqual(setActiveCalls, [
+    {
+      projectInstanceId: 'project-a',
+      provider: 'qwen',
+    },
   ]);
 });
 
@@ -1191,6 +1345,9 @@ test('rejects unsupported codex commands before they reach the executor', async 
     '  //bind <projectId>  - bind this chat to a project',
     '  //unbind            - unbind this chat',
     '  //list              - show current binding',
+    '  //projects          - list all projects',
+    '  //providers         - list providers for the bound project',
+    '  //provider <name>   - switch the active provider',
     '  //new               - start a new codex thread for this chat',
     '  //status            - show bridge and codex state',
     '  //read <path>       - read a project file as a card',
@@ -1241,6 +1398,9 @@ test('returns an error for unknown // commands instead of falling through', asyn
     '  //bind <projectId>  - bind this chat to a project',
     '  //unbind            - unbind this chat',
     '  //list              - show current binding',
+    '  //projects          - list all projects',
+    '  //providers         - list providers for the bound project',
+    '  //provider <name>   - switch the active provider',
     '  //new               - start a new codex thread for this chat',
     '  //status            - show bridge and codex state',
     '  //read <path>       - read a project file as a card',

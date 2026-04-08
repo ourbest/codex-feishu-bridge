@@ -11,7 +11,56 @@ import {
   resolveCodexRuntimeConfigs,
   writeProjectsFile,
 } from '../../src/runtime/codex-config.ts';
+import { normalizeProjectConfig } from '../../src/runtime/project-config.ts';
 import { createProjectConfigWatcher } from '../../src/runtime/project-config-watcher.ts';
+
+test('requires projectInstanceId and cwd for explicit project configs', () => {
+  assert.throws(() => normalizeProjectConfig({ cwd: '/repo/a' }), /projectInstanceId/i);
+  assert.throws(() => normalizeProjectConfig({ projectInstanceId: 'project-a' }), /cwd/i);
+});
+
+test('defaults providers when they are omitted or empty', () => {
+  assert.deepEqual(normalizeProjectConfig({ projectInstanceId: 'project-a', cwd: '/repo/a' }), {
+    projectInstanceId: 'project-a',
+    cwd: '/repo/a',
+    providers: [
+      { provider: 'codex', transport: 'stdio' },
+      { provider: 'cc', transport: 'stdio' },
+      { provider: 'qwen', transport: 'stdio' },
+    ],
+  });
+
+  assert.deepEqual(normalizeProjectConfig({ projectInstanceId: 'project-a', cwd: '/repo/a', providers: [] }), {
+    projectInstanceId: 'project-a',
+    cwd: '/repo/a',
+    providers: [
+      { provider: 'codex', transport: 'stdio' },
+      { provider: 'cc', transport: 'stdio' },
+      { provider: 'qwen', transport: 'stdio' },
+    ],
+  });
+});
+
+test('preserves explicit provider order when normalizing project configs', () => {
+  assert.deepEqual(
+    normalizeProjectConfig({
+      projectInstanceId: 'project-a',
+      cwd: '/repo/a',
+      providers: [
+        { provider: 'qwen', transport: 'websocket', port: 8081 },
+        { provider: 'codex', transport: 'stdio' },
+      ],
+    }),
+    {
+      projectInstanceId: 'project-a',
+      cwd: '/repo/a',
+      providers: [
+        { provider: 'qwen', transport: 'websocket', port: 8081 },
+        { provider: 'codex', transport: 'stdio' },
+      ],
+    },
+  );
+});
 
 test('returns null when codex runtime is not enabled', () => {
   assert.equal(resolveCodexRuntimeConfig({}), null);
@@ -91,6 +140,7 @@ test('preserves qwen executable when creating runtime config directly', () => {
       serviceName: 'codex-bridge',
       transport: 'websocket',
       websocketUrl: 'ws://127.0.0.1:4000',
+      adapterType: 'codex',
       qwenExecutable: '/opt/homebrew/bin/qwen',
     },
   );
@@ -106,6 +156,7 @@ test('resolves multiple codex runtime configs from environment json', () => {
         },
         {
           projectInstanceId: 'project-b',
+          cwd: '/repo/b',
           command: 'codex',
           args: ['app-server', '--listen', 'stdio://'],
         },
@@ -126,7 +177,7 @@ test('resolves multiple codex runtime configs from environment json', () => {
         projectInstanceId: 'project-b',
         command: 'codex',
         args: ['app-server', '--listen', 'stdio://'],
-        cwd: undefined,
+        cwd: '/repo/b',
         serviceName: 'codex-bridge',
         transport: 'websocket',
         websocketUrl: 'ws://127.0.0.1:4000',
@@ -134,6 +185,52 @@ test('resolves multiple codex runtime configs from environment json', () => {
       },
     ],
   );
+});
+
+test('keeps valid projects from a mixed projects file and skips malformed entries', () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'codex-bridge-projects-'));
+  const filePath = join(tempDir, 'projects.json');
+
+  writeFileSync(
+    filePath,
+    `${JSON.stringify(
+      {
+        projects: [
+          {
+            projectInstanceId: 'project-a',
+            cwd: '/repo/a',
+            providers: [],
+          },
+          {
+            projectInstanceId: 'project-b',
+          },
+        ],
+      },
+      null,
+      2,
+    )}\n`,
+    'utf8',
+  );
+
+  assert.deepEqual(loadProjectsFromFile(filePath), [
+    {
+      projectInstanceId: 'project-a',
+      command: 'codex',
+      args: ['app-server'],
+      cwd: '/repo/a',
+      serviceName: 'codex-bridge',
+      transport: 'websocket',
+      websocketUrl: 'ws://127.0.0.1:4000',
+      adapterType: 'codex',
+      providers: [
+        { provider: 'codex', transport: 'stdio' },
+        { provider: 'cc', transport: 'stdio' },
+        { provider: 'qwen', transport: 'stdio' },
+      ],
+    },
+  ]);
+
+  rmSync(tempDir, { recursive: true, force: true });
 });
 
 test('loads stdio project configs from projects file shape', () => {
@@ -147,12 +244,8 @@ test('loads stdio project configs from projects file shape', () => {
         projects: [
           {
             projectInstanceId: 'project-a',
-            transport: 'stdio',
-            command: 'codex',
-            args: ['app-server'],
             cwd: '/repo/a',
-            model: 'gpt-5.4',
-            serviceName: 'codex-bridge-a',
+            providers: [],
           },
         ],
       },
@@ -162,29 +255,21 @@ test('loads stdio project configs from projects file shape', () => {
     'utf8',
   );
 
-  assert.deepEqual(resolveCodexRuntimeConfigs({
-    BRIDGE_CODEX_PROJECTS_JSON: JSON.stringify([
-      {
-        projectInstanceId: 'project-a',
-        transport: 'stdio',
-        command: 'codex',
-        args: ['app-server'],
-        cwd: '/repo/a',
-        model: 'gpt-5.4',
-        serviceName: 'codex-bridge-a',
-      },
-    ]),
-  }), [
+  assert.deepEqual(loadProjectsFromFile(filePath), [
     {
       projectInstanceId: 'project-a',
       command: 'codex',
       args: ['app-server'],
       cwd: '/repo/a',
-      model: 'gpt-5.4',
-      serviceName: 'codex-bridge-a',
-      transport: 'stdio',
-      websocketUrl: undefined,
+      serviceName: 'codex-bridge',
+      transport: 'websocket',
+      websocketUrl: 'ws://127.0.0.1:4000',
       adapterType: 'codex',
+      providers: [
+        { provider: 'codex', transport: 'stdio' },
+        { provider: 'cc', transport: 'stdio' },
+        { provider: 'qwen', transport: 'stdio' },
+      ],
     },
   ]);
 
@@ -201,10 +286,14 @@ test('writes projects file snapshots in the same shape they are read from', () =
       command: 'codex',
       args: ['app-server'],
       cwd: '/repo/a',
-      model: 'gpt-5.4-mini',
       serviceName: 'codex-bridge-a',
       transport: 'websocket',
       websocketUrl: 'ws://127.0.0.1:4000',
+      providers: [
+        { provider: 'codex', transport: 'stdio' },
+        { provider: 'cc', transport: 'stdio' },
+        { provider: 'qwen', transport: 'stdio' },
+      ],
     },
   ]);
 
@@ -217,10 +306,14 @@ test('writes projects file snapshots in the same shape they are read from', () =
           command: 'codex',
           args: ['app-server'],
           cwd: '/repo/a',
-          model: 'gpt-5.4-mini',
           serviceName: 'codex-bridge-a',
           transport: 'websocket',
           websocketUrl: 'ws://127.0.0.1:4000',
+          providers: [
+            { provider: 'codex', transport: 'stdio' },
+            { provider: 'cc', transport: 'stdio' },
+            { provider: 'qwen', transport: 'stdio' },
+          ],
         },
       ],
     },
@@ -249,6 +342,11 @@ test('preserves the original cwd text when rewriting loaded projects', () => {
               serviceName: 'codex-bridge',
               transport: 'websocket',
               websocketUrl: 'ws://127.0.0.1:4000',
+              providers: [
+                { provider: 'codex', transport: 'stdio' },
+                { provider: 'cc', transport: 'stdio' },
+                { provider: 'qwen', transport: 'stdio' },
+              ],
             },
           ],
         },
@@ -270,6 +368,11 @@ test('preserves the original cwd text when rewriting loaded projects', () => {
         transport: 'websocket',
         websocketUrl: 'ws://127.0.0.1:4000',
         adapterType: 'codex',
+        providers: [
+          { provider: 'codex', transport: 'stdio' },
+          { provider: 'cc', transport: 'stdio' },
+          { provider: 'qwen', transport: 'stdio' },
+        ],
       },
     ]);
 
@@ -292,6 +395,11 @@ test('preserves the original cwd text when rewriting loaded projects', () => {
             transport: 'websocket',
             websocketUrl: 'ws://127.0.0.1:4000',
             adapterType: 'codex',
+            providers: [
+              { provider: 'codex', transport: 'stdio' },
+              { provider: 'cc', transport: 'stdio' },
+              { provider: 'qwen', transport: 'stdio' },
+            ],
           },
         ],
       },
@@ -336,15 +444,36 @@ test('keeps the last valid projects snapshot when reload encounters invalid json
       projectInstanceId: 'project-a',
       command: 'codex',
       args: ['app-server'],
-      cwd: undefined,
+      cwd: '/repo/a',
       serviceName: 'codex-bridge',
       transport: 'websocket' as const,
       websocketUrl: 'ws://127.0.0.1:4000',
       adapterType: 'codex' as const,
+      providers: [
+        { provider: 'codex', transport: 'stdio' },
+        { provider: 'cc', transport: 'stdio' },
+        { provider: 'qwen', transport: 'stdio' },
+      ],
     },
   ];
 
-  writeFileSync(filePath, `${JSON.stringify({ projects: firstSnapshot }, null, 2)}\n`, 'utf8');
+  writeFileSync(
+    filePath,
+    `${JSON.stringify(
+      {
+        projects: [
+          {
+            projectInstanceId: 'project-a',
+            cwd: '/repo/a',
+            providers: [],
+          },
+        ],
+      },
+      null,
+      2,
+    )}\n`,
+    'utf8',
+  );
 
   const seenSnapshots: string[][] = [];
   const watcher = createProjectConfigWatcher({

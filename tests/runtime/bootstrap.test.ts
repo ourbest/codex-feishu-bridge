@@ -5,6 +5,7 @@ import {
   createLocalDevLarkTransport,
   resolveBridgeConfig,
   resolveProjectsFilePath,
+  resolveProjectsRootPath,
   resolveStoragePath,
 } from '../../src/runtime/bootstrap.ts';
 
@@ -115,4 +116,15 @@ test('resolves the projects file path from the environment', () => {
   );
 
   assert.equal(resolveProjectsFilePath({}), './projects.json');
+});
+
+test('resolves the projects root path from the environment', () => {
+  assert.equal(
+    resolveProjectsRootPath({
+      BRIDGE_PROJECTS_ROOT: '/tmp/projects-root',
+    }),
+    '/tmp/projects-root',
+  );
+
+  assert.equal(resolveProjectsRootPath({}), undefined);
 });

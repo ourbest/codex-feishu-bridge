@@ -1,6 +1,7 @@
 import type { BindingService } from '../core/binding/binding-service.ts';
 import type { ProjectState } from '../runtime/project-registry.ts';
 import type { ApprovalService } from '../runtime/approval-service.ts';
+import type { ProjectProviderConfig, ProjectProviderName } from '../runtime/provider-registry.ts';
 
 export interface ChatCommandInput {
   sessionId: string;
@@ -24,11 +25,31 @@ export interface StructuredCodexCommandExecutionInput {
   params: Record<string, unknown>;
 }
 
+export interface ProjectSummary {
+  projectInstanceId: string;
+  cwd?: string | null;
+  source?: string | null;
+  activeProvider?: string | null;
+  providers?: ProjectProviderConfig[];
+  configured?: boolean;
+  active?: boolean;
+  removed?: boolean;
+}
+
+export interface ProjectProviderSummary extends ProjectProviderConfig {
+  started?: boolean;
+  active?: boolean;
+}
+
 export interface ChatCommandServiceDependencies {
   bindingService: BindingService;
   projectRegistry: {
     describeProject(projectInstanceId: string): Promise<ProjectState>;
-    getProjectConfig?(projectInstanceId: string): { cwd?: string | null; model?: string | null } | null;
+    getProjectConfig?(projectInstanceId: string): { cwd?: string | null; model?: string | null; providers?: ProjectProviderConfig[] | null; activeProvider?: ProjectProviderName | null } | null;
+    listProjects?(): Promise<ProjectSummary[]>;
+    listProjectProviders?(projectInstanceId: string): Promise<ProjectProviderSummary[]>;
+    getActiveProvider?(projectInstanceId: string): Promise<ProjectProviderName | null>;
+    setActiveProvider?(projectInstanceId: string, provider: ProjectProviderName): Promise<void> | void;
     updateProjectConfig?(projectInstanceId: string, input: { model?: string | null }): Promise<{ model?: string | null } | null> | { model?: string | null } | null;
     startThread?(projectInstanceId: string, options?: { cwd?: string; force?: boolean }): Promise<string>;
     getLastThread?(projectInstanceId: string, sessionId: string): Promise<string | null>;
@@ -46,7 +67,7 @@ export interface ChatCommandService {
 }
 
 function isBridgeCommandToken(token: string): boolean {
-  return token === 'bind' || token === 'unbind' || token === 'list' || token === 'help' || token === 'status' || token === 'sessions' || token === 'read' || token === 'restart' || token === 'reload' || token === 'resume' || token === 'new' || token === 'model';
+  return token === 'bind' || token === 'unbind' || token === 'list' || token === 'help' || token === 'status' || token === 'sessions' || token === 'read' || token === 'restart' || token === 'reload' || token === 'resume' || token === 'new' || token === 'model' || token === 'projects' || token === 'providers' || token === 'provider';
 }
 
 function isCodexCommandToken(token: string): boolean {
@@ -85,6 +106,9 @@ function buildHelpLines(): string[] {
     '  //bind <projectId>  - bind this chat to a project',
     '  //unbind            - unbind this chat',
     '  //list              - show current binding',
+    '  //projects          - list all projects',
+    '  //providers         - list providers for the bound project',
+    '  //provider <name>   - switch the active provider',
     '  //new               - start a new codex thread for this chat',
     '  //status            - show bridge and codex state',
     '  //read <path>       - read a project file as a card',
@@ -192,6 +216,111 @@ function buildUnknownCommandLines(input: string): string[] {
     `[codex-bridge] unknown command: ${input.trim()}`,
     ...buildHelpLines(),
   ];
+}
+
+function formatProviderSummary(provider: ProjectProviderSummary, activeProvider?: string | null): string {
+  const parts = [
+    `  - ${provider.provider}`,
+    provider.transport ? `transport=${provider.transport}` : null,
+    provider.port !== undefined ? `port=${provider.port}` : null,
+    provider.active === true || activeProvider === provider.provider ? 'active' : null,
+    provider.started === true ? 'started' : 'stopped',
+  ].filter((part): part is string => part !== null);
+
+  return parts.join(' | ');
+}
+
+async function buildProjectsLines(dependencies: ChatCommandServiceDependencies): Promise<string[]> {
+  if (dependencies.projectRegistry.listProjects === undefined) {
+    return ['[codex-bridge] project listing is not configured'];
+  }
+
+  const projects = await dependencies.projectRegistry.listProjects();
+  if (projects.length === 0) {
+    return ['[codex-bridge] no projects configured'];
+  }
+
+  const lines = ['[codex-bridge] projects:'];
+  for (const project of projects) {
+    lines.push(`  - ${project.projectInstanceId}`);
+    if (project.cwd !== undefined && project.cwd !== null) {
+      lines.push(`    cwd: ${project.cwd}`);
+    }
+    if (project.source !== undefined && project.source !== null) {
+      lines.push(`    source: ${project.source}`);
+    }
+    if (project.activeProvider !== undefined && project.activeProvider !== null) {
+      lines.push(`    active provider: ${project.activeProvider}`);
+    }
+    if (Array.isArray(project.providers) && project.providers.length > 0) {
+      lines.push(`    providers: ${project.providers.map((entry) => entry.provider).join(', ')}`);
+    }
+    if (project.active === true || project.configured === true || project.removed === true) {
+      lines.push(`    configured: ${yesNo(project.configured === true)}`);
+      lines.push(`    active: ${yesNo(project.active === true)}`);
+      lines.push(`    removed: ${yesNo(project.removed === true)}`);
+    }
+  }
+
+  return lines;
+}
+
+async function buildProvidersLines(
+  dependencies: ChatCommandServiceDependencies,
+  sessionId: string,
+): Promise<string[]> {
+  const projectId = await dependencies.bindingService.getProjectBySession(sessionId);
+  if (projectId === null) {
+    return formatNotBoundMessage();
+  }
+
+  const projectConfig = dependencies.projectRegistry.getProjectConfig?.(projectId) ?? null;
+  const activeProvider = dependencies.projectRegistry.getActiveProvider === undefined
+    ? projectConfig?.activeProvider ?? null
+    : await dependencies.projectRegistry.getActiveProvider(projectId);
+
+  const providers = dependencies.projectRegistry.listProjectProviders !== undefined
+    ? await dependencies.projectRegistry.listProjectProviders(projectId)
+    : Array.isArray(projectConfig?.providers)
+      ? projectConfig.providers.map((entry) => ({
+          ...entry,
+          active: activeProvider === entry.provider,
+        }))
+      : [];
+
+  if (providers.length === 0) {
+    return [`[codex-bridge] no providers configured for ${projectId}`];
+  }
+
+  const lines = [`[codex-bridge] providers for ${projectId}:`];
+  for (const provider of providers) {
+    lines.push(formatProviderSummary(provider, activeProvider));
+  }
+
+  return lines;
+}
+
+async function switchActiveProviderLines(
+  dependencies: ChatCommandServiceDependencies,
+  sessionId: string,
+  providerName: string,
+): Promise<string[]> {
+  const projectId = await dependencies.bindingService.getProjectBySession(sessionId);
+  if (projectId === null) {
+    return formatNotBoundMessage();
+  }
+
+  const normalizedProvider = providerName.trim().toLowerCase();
+  if (normalizedProvider !== 'codex' && normalizedProvider !== 'cc' && normalizedProvider !== 'qwen') {
+    return ['Usage: //provider <codex|cc|qwen>'];
+  }
+
+  if (dependencies.projectRegistry.setActiveProvider === undefined) {
+    return ['[codex-bridge] provider switching is not configured'];
+  }
+
+  await dependencies.projectRegistry.setActiveProvider(projectId, normalizedProvider);
+  return [`[codex-bridge] active provider for ${projectId} set to ${normalizedProvider}`];
 }
 
 function buildCodexSupportNotConfiguredLines(projectId: string, method: string): string[] {
@@ -418,6 +547,20 @@ export function createChatCommandService(dependencies: ChatCommandServiceDepende
               `  senderId: ${input.senderId}`,
               `  projectId: ${projectId}`,
             ];
+          }
+
+          case 'projects':
+            return await buildProjectsLines(dependencies);
+
+          case 'providers':
+            return await buildProvidersLines(dependencies, input.sessionId);
+
+          case 'provider': {
+            if (parsed.args.length !== 1) {
+              return ['Usage: //provider <codex|cc|qwen>'];
+            }
+
+            return await switchActiveProviderLines(dependencies, input.sessionId, parsed.args[0]);
           }
 
           case 'new': {

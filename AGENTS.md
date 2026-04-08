@@ -62,7 +62,10 @@ src/main.ts                    # Entry point - resolves config and starts runtim
 - Codex project connections are established **on-demand** when a chat is first bound to a project
 - Connections are **released** when all chats bound to that project are unbound
 - Configuration via `projects.json` file lists available projects
-- No Codex connections exist at startup — they are created lazily
+- `BRIDGE_PROJECTS_ROOT` can add implicit projects from non-hidden subdirectories
+- `providers: []` means "use the default provider list" (`codex`, `cc`, `qwen`)
+- Each project tracks one active provider at a time; switching providers should reuse any already-started provider instance and not stop inactive ones
+- No provider connections exist at startup — they are created lazily
 
 ### Binding Storage
 
@@ -82,6 +85,9 @@ Bindings persist to `BRIDGE_STORAGE_PATH` (default `./data/bridge.json`). Two st
 | `//bind <projectId>` | Bind this chat to a project |
 | `//unbind` | Unbind this chat |
 | `//list` | Show current binding |
+| `//projects` | List all visible projects |
+| `//providers` | List providers for the bound project |
+| `//provider <name>` | Switch the active provider |
 | `//sessions` | Show bridge binding plus Codex project state |
 | `//reload projects` | Reload `projects.json` immediately |
 | `//resume <threadId|last>` | Resume a Codex thread for the current chat |
@@ -111,7 +117,10 @@ Bindings persist to `BRIDGE_STORAGE_PATH` (default `./data/bridge.json`). Two st
   "projects": [
     {
       "projectInstanceId": "project_a",
-      "websocketUrl": "ws://127.0.0.1:4000"
+      "cwd": "/path/to/project_a",
+      "providers": [
+        { "provider": "codex", "transport": "stdio" }
+      ]
     }
   ]
 }
@@ -133,3 +142,4 @@ Loaded by `loadProjectsFromFile()` at startup.
 
 **Projects configuration**:
 - `BRIDGE_PROJECTS_FILE` - path to projects.json (default ./projects.json)
+- `BRIDGE_PROJECTS_ROOT` - auto-discovery root for project folders

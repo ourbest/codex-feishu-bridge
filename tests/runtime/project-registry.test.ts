@@ -2,11 +2,22 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createProjectRegistry } from '../../src/runtime/project-registry.ts';
 import type { CodexProjectClient } from '../../src/runtime/codex-project-registry.ts';
+import { InMemoryBindingStore } from '../../src/storage/binding-store.ts';
 
 function createMockClient(projectId: string): CodexProjectClient {
   return {
     generateReply: async ({ text }) => `reply to ${text}`,
     stop: async () => {},
+  };
+}
+
+function createProviderMockClient(provider: string, stopCalls: string[]): CodexProjectClient {
+  return {
+    generateReply: async ({ text }) => `${provider}:${text}`,
+    startThread: async () => `${provider}-thread`,
+    stop: async () => {
+      stopCalls.push(provider);
+    },
   };
 }
 
@@ -29,6 +40,162 @@ test('creates connection when first binding is created', async () => {
   const handler = registry.getHandler('project-a');
   assert.ok(handler !== null);
   assert.deepEqual(startCalls, [{ cwd: '/repo/project-a' }]);
+});
+
+test('exposes default providers and the initial active provider', async () => {
+  const registry = createProjectRegistry({
+    bridgeStateStore: new InMemoryBindingStore(),
+    allocateWebSocketPort: async () => 45123,
+    getProjectConfig: (id) =>
+      id === 'project-a'
+        ? {
+            projectInstanceId: 'project-a',
+            websocketUrl: 'ws://localhost:4000',
+            cwd: '/repo/project-a',
+          }
+        : null,
+    createClient: () => createMockClient('project-a'),
+  });
+
+  assert.deepEqual(await registry.getProjectProviders('project-a'), [
+    { provider: 'codex', transport: 'stdio', active: true, started: false },
+    { provider: 'cc', transport: 'stdio', active: false, started: false },
+    { provider: 'qwen', transport: 'stdio', active: false, started: false },
+  ]);
+  assert.equal(await registry.getActiveProvider('project-a'), 'codex');
+});
+
+test('switches active providers without stopping already-started inactive providers', async () => {
+  const createCalls: Array<{ provider: string; port?: number }> = [];
+  const stopCalls: string[] = [];
+  const registry = createProjectRegistry({
+    bridgeStateStore: new InMemoryBindingStore(),
+    allocateWebSocketPort: async () => 45123,
+    getProjectConfig: (id) =>
+      id === 'project-a'
+        ? {
+            projectInstanceId: 'project-a',
+            websocketUrl: 'ws://localhost:4000',
+            cwd: '/repo/project-a',
+            providers: [
+              { provider: 'codex', transport: 'stdio' },
+              { provider: 'qwen', transport: 'websocket' },
+            ],
+          }
+        : null,
+    createClient: (_projectId, _config, provider) => {
+      createCalls.push({ provider: provider?.provider ?? 'codex', port: provider?.port });
+      return createProviderMockClient(provider?.provider ?? 'codex', stopCalls);
+    },
+  });
+
+  await registry.onBindingChanged({ type: 'bound', projectId: 'project-a', sessionId: 'chat-1' });
+  assert.deepEqual(createCalls, [{ provider: 'codex', port: undefined }]);
+
+  await registry.setActiveProvider('project-a', 'qwen');
+  assert.equal(await registry.getActiveProvider('project-a'), 'qwen');
+  assert.deepEqual(createCalls, [{ provider: 'codex', port: undefined }]);
+  assert.deepEqual(stopCalls, []);
+
+  const handler = registry.getHandler('project-a');
+  assert.ok(handler !== null);
+  const reply = await handler!({
+    projectInstanceId: 'project-a',
+    message: { text: 'hello' },
+  });
+
+  assert.equal(reply?.text, 'qwen:hello');
+  assert.equal(createCalls[1]?.provider, 'qwen');
+  assert.equal(typeof createCalls[1]?.port, 'number');
+});
+
+test('reuses a started provider when switching back to it', async () => {
+  const createCalls: Array<{ provider: string; port?: number }> = [];
+  const stopCalls: string[] = [];
+  const registry = createProjectRegistry({
+    bridgeStateStore: new InMemoryBindingStore(),
+    allocateWebSocketPort: async () => 45123,
+    getProjectConfig: (id) =>
+      id === 'project-a'
+        ? {
+            projectInstanceId: 'project-a',
+            websocketUrl: 'ws://localhost:4000',
+            cwd: '/repo/project-a',
+            providers: [
+              { provider: 'codex', transport: 'stdio' },
+              { provider: 'qwen', transport: 'websocket' },
+            ],
+          }
+        : null,
+    createClient: (_projectId, _config, provider) => {
+      createCalls.push({ provider: provider?.provider ?? 'codex', port: provider?.port });
+      return createProviderMockClient(provider?.provider ?? 'codex', stopCalls);
+    },
+  });
+
+  await registry.onBindingChanged({ type: 'bound', projectId: 'project-a', sessionId: 'chat-1' });
+  await registry.setActiveProvider('project-a', 'qwen');
+  const qwenHandler = registry.getHandler('project-a');
+  assert.ok(qwenHandler !== null);
+  await qwenHandler!({
+    projectInstanceId: 'project-a',
+    message: { text: 'hello' },
+  });
+
+  await registry.setActiveProvider('project-a', 'codex');
+  await registry.setActiveProvider('project-a', 'qwen');
+
+  const qwenHandlerAgain = registry.getHandler('project-a');
+  assert.ok(qwenHandlerAgain !== null);
+  const reply = await qwenHandlerAgain!({
+    projectInstanceId: 'project-a',
+    message: { text: 'again' },
+  });
+
+  assert.equal(reply?.text, 'qwen:again');
+  assert.equal(createCalls.filter((call) => call.provider === 'qwen').length, 1);
+  assert.deepEqual(stopCalls, []);
+});
+
+test('persists the active provider and preserves it across registry recreation', async () => {
+  const store = new InMemoryBindingStore();
+  const registry = createProjectRegistry({
+    bridgeStateStore: store,
+    getProjectConfig: (id) =>
+      id === 'project-a'
+        ? {
+            projectInstanceId: 'project-a',
+            websocketUrl: 'ws://localhost:4000',
+            cwd: '/repo/project-a',
+            providers: [
+              { provider: 'codex', transport: 'stdio' },
+              { provider: 'qwen', transport: 'websocket' },
+            ],
+          }
+        : null,
+    createClient: () => createMockClient('project-a'),
+  });
+
+  await registry.setActiveProvider('project-a', 'qwen');
+
+  const reloaded = createProjectRegistry({
+    bridgeStateStore: store,
+    getProjectConfig: (id) =>
+      id === 'project-a'
+        ? {
+            projectInstanceId: 'project-a',
+            websocketUrl: 'ws://localhost:4000',
+            cwd: '/repo/project-a',
+            providers: [
+              { provider: 'codex', transport: 'stdio' },
+              { provider: 'qwen', transport: 'websocket' },
+            ],
+          }
+        : null,
+    createClient: () => createMockClient('project-a'),
+  });
+
+  assert.equal(await reloaded.getActiveProvider('project-a'), 'qwen');
 });
 
 test('maps codex notifications to project status updates', async () => {

@@ -7,9 +7,10 @@ import {
   createLocalDevLarkTransport,
   resolveBridgeConfig,
   resolveProjectsFilePath,
+  resolveProjectsRootPath,
   resolveStoragePath,
 } from './runtime/bootstrap.ts';
-import { loadProjectsFromFile, resolveCodexRuntimeConfigs, type ProjectConfigEntry, writeProjectsFile } from './runtime/codex-config.ts';
+import { resolveCodexRuntimeConfigs, type ProjectConfigEntry, writeProjectsFile } from './runtime/codex-config.ts';
 import { CodexAppServerClient } from './adapters/codex/app-server-client.ts';
 import { ClaudeCodeClient } from './adapters/claude-code/index.ts';
 import { QwenCodeClient } from './adapters/qwen-code/index.ts';
@@ -17,6 +18,7 @@ import { OpencodeClient } from './adapters/opencode/index.ts';
 import { resolveConsoleRuntimeConfig, runCodexConsoleSession } from './runtime/codex-console.ts';
 import { createProjectRegistry } from './runtime/project-registry.ts';
 import { createProjectConfigWatcher } from './runtime/project-config-watcher.ts';
+import { loadProjectConfigs } from './runtime/project-discovery.ts';
 import { resolveFeishuRuntimeConfig } from './runtime/feishu-config.ts';
 import { formatCodexCommandResult } from './runtime/codex-command-formatting.ts';
 import { createFeishuWebSocketTransport } from './adapters/lark/feishu-websocket.ts';
@@ -228,6 +230,7 @@ export async function run(): Promise<void> {
   const config = resolveBridgeConfig();
   const storagePath = resolveStoragePath();
   const projectsFilePath = resolveProjectsFilePath();
+  const projectsRootPath = resolveProjectsRootPath();
   const consoleRuntime = resolveConsoleRuntimeConfig();
   const codexRuntimes = resolveCodexRuntimeConfigs() ?? [];
   const feishuRuntime = resolveFeishuRuntimeConfig();
@@ -236,7 +239,10 @@ export async function run(): Promise<void> {
   let projectRegistryImpl: ReturnType<typeof createProjectRegistry> | null = null;
   let projectConfigWatcher: ReturnType<typeof createProjectConfigWatcher> | null = null;
   let reloadProjectsHandler: (() => Promise<string[]>) | null = null;
-  let projectConfigEntries: ProjectConfigEntry[] = loadProjectsFromFile(projectsFilePath) ?? [];
+  let projectConfigEntries: ProjectConfigEntry[] = loadProjectConfigs({
+    projectsFilePath,
+    projectsRoot: projectsRootPath,
+  });
   let app: ReturnType<typeof createBridgeApp> | null = null;
   let restartInFlight = false;
 
@@ -283,6 +289,50 @@ export async function run(): Promise<void> {
           throw new Error('project registry is not initialized');
         }
         return projectRegistryImpl.describeProject(projectInstanceId);
+      },
+      async listProjects() {
+        if (projectRegistryImpl === null) {
+          throw new Error('project registry is not initialized');
+        }
+
+        return await Promise.all(
+          projectConfigEntries.map(async (entry) => {
+            const state = await projectRegistryImpl.describeProject(entry.projectInstanceId);
+            const activeProvider = await projectRegistryImpl.getActiveProvider(entry.projectInstanceId);
+            const providers = await projectRegistryImpl.getProjectProviders(entry.projectInstanceId);
+
+            return {
+              projectInstanceId: entry.projectInstanceId,
+              cwd: entry.cwd,
+              activeProvider,
+              providers,
+              configured: state.configured,
+              active: state.active,
+              removed: state.removed,
+            };
+          }),
+        );
+      },
+      async getProjectProviders(projectInstanceId: string) {
+        if (projectRegistryImpl === null) {
+          throw new Error('project registry is not initialized');
+        }
+
+        return await projectRegistryImpl.getProjectProviders(projectInstanceId);
+      },
+      async getActiveProvider(projectInstanceId: string) {
+        if (projectRegistryImpl === null) {
+          throw new Error('project registry is not initialized');
+        }
+
+        return await projectRegistryImpl.getActiveProvider(projectInstanceId);
+      },
+      async setActiveProvider(projectInstanceId: string, provider: string) {
+        if (projectRegistryImpl === null) {
+          throw new Error('project registry is not initialized');
+        }
+
+        await projectRegistryImpl.setActiveProvider(projectInstanceId, provider as 'codex' | 'cc' | 'qwen');
       },
       async getProjectDiagnostics(projectInstanceId: string) {
         if (projectRegistryImpl === null) {
@@ -619,6 +669,10 @@ export async function run(): Promise<void> {
 
   projectConfigWatcher = createProjectConfigWatcher({
     filePath: projectsFilePath,
+    readProjects: () => loadProjectConfigs({
+      projectsFilePath,
+      projectsRoot: projectsRootPath,
+    }),
     onProjectsChanged: async (projects) => {
       projectConfigEntries = projects;
       if (projectRegistryImpl === null) {

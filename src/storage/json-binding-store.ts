@@ -1,7 +1,15 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import type { BindingRecord, BindingSnapshot, BindingStore, ThreadMemoryRecord, ThreadMemoryStore } from './binding-store.ts';
+import type {
+  BindingRecord,
+  BindingSnapshot,
+  BindingStore,
+  BridgeProjectStateRecord,
+  BridgeStateStore,
+  ThreadMemoryRecord,
+  ThreadMemoryStore,
+} from './binding-store.ts';
 
 function ensureDirectory(filePath: string): void {
   const directory = path.dirname(filePath);
@@ -12,17 +20,18 @@ function ensureDirectory(filePath: string): void {
 
 function readSnapshot(filePath: string): BindingSnapshot {
   if (!fs.existsSync(filePath)) {
-    return { bindings: [], threadMemories: [] };
+    return { bindings: [], threadMemories: [], projectStates: [] };
   }
 
   const raw = fs.readFileSync(filePath, 'utf8');
   if (raw.trim() === '') {
-    return { bindings: [], threadMemories: [] };
+    return { bindings: [], threadMemories: [], projectStates: [] };
   }
 
   const parsed = JSON.parse(raw) as Partial<BindingSnapshot>;
   const bindings = Array.isArray(parsed.bindings) ? parsed.bindings : [];
   const threadMemories = Array.isArray(parsed.threadMemories) ? parsed.threadMemories : [];
+  const projectStates = Array.isArray(parsed.projectStates) ? parsed.projectStates : [];
   return {
     bindings: bindings
       .filter((entry): entry is BindingRecord => {
@@ -52,6 +61,30 @@ function readSnapshot(filePath: string): BindingSnapshot {
         sessionId: entry.sessionId,
         threadId: entry.threadId,
       })),
+    projectStates: projectStates
+      .filter((entry): entry is BridgeProjectStateRecord => {
+        return (
+          typeof entry === 'object' &&
+          entry !== null &&
+          typeof entry.projectInstanceId === 'string'
+        );
+      })
+      .map((entry) => ({
+        projectInstanceId: entry.projectInstanceId,
+        ...(typeof entry.activeProvider === 'string' && entry.activeProvider.trim() !== ''
+          ? { activeProvider: entry.activeProvider }
+          : {}),
+        ...(typeof entry.websocketPorts === 'object' && entry.websocketPorts !== null && !Array.isArray(entry.websocketPorts)
+          ? {
+              websocketPorts: Object.fromEntries(
+                Object.entries(entry.websocketPorts).filter(([, value]) => typeof value === 'number'),
+              ),
+            }
+          : {}),
+        ...(Array.isArray(entry.startedProviders)
+          ? { startedProviders: entry.startedProviders.filter((value): value is string => typeof value === 'string' && value.trim() !== '') }
+          : {}),
+      })),
   };
 }
 
@@ -60,7 +93,16 @@ function writeSnapshot(filePath: string, snapshot: BindingSnapshot): void {
   fs.writeFileSync(filePath, `${JSON.stringify(snapshot, null, 2)}\n`, 'utf8');
 }
 
-export class JsonBindingStore implements BindingStore {
+function cloneProjectState(state: BridgeProjectStateRecord): BridgeProjectStateRecord {
+  return {
+    projectInstanceId: state.projectInstanceId,
+    ...(state.activeProvider !== undefined ? { activeProvider: state.activeProvider } : {}),
+    ...(state.websocketPorts !== undefined ? { websocketPorts: { ...state.websocketPorts } } : {}),
+    ...(state.startedProviders !== undefined ? { startedProviders: [...state.startedProviders] } : {}),
+  };
+}
+
+export class JsonBindingStore implements BindingStore, ThreadMemoryStore, BridgeStateStore {
   private readonly filePath: string;
   private snapshot: BindingSnapshot;
 
@@ -91,6 +133,12 @@ export class JsonBindingStore implements BindingStore {
 
   private removeThreadSession(sessionId: string): void {
     this.snapshot.threadMemories = this.snapshot.threadMemories.filter((entry) => entry.sessionId !== sessionId);
+  }
+
+  private removeProjectState(projectInstanceId: string): void {
+    this.snapshot.projectStates = this.snapshot.projectStates.filter(
+      (entry) => entry.projectInstanceId !== projectInstanceId,
+    );
   }
 
   getSessionByProject(projectInstanceId: string): string | null {
@@ -149,6 +197,26 @@ export class JsonBindingStore implements BindingStore {
 
   deleteLastThreadBySession(sessionId: string): void {
     this.removeThreadSession(sessionId);
+    this.persist();
+  }
+
+  getProjectState(projectInstanceId: string): BridgeProjectStateRecord | null {
+    const state = this.snapshot.projectStates.find((entry) => entry.projectInstanceId === projectInstanceId);
+    return state === undefined ? null : cloneProjectState(state);
+  }
+
+  getAllProjectStates(): BridgeProjectStateRecord[] {
+    return this.snapshot.projectStates.map((state) => cloneProjectState(state));
+  }
+
+  setProjectState(state: BridgeProjectStateRecord): void {
+    this.removeProjectState(state.projectInstanceId);
+    this.snapshot.projectStates.push(cloneProjectState(state));
+    this.persist();
+  }
+
+  deleteProjectState(projectInstanceId: string): void {
+    this.removeProjectState(projectInstanceId);
     this.persist();
   }
 }

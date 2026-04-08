@@ -1,7 +1,7 @@
 import { createInterface } from 'node:readline';
 
-import { resolvePathLikeInput } from './codex-config.ts';
 import type { CodexProjectClient } from './codex-project.ts';
+import { resolvePathLikeInput } from './project-config.ts';
 
 export interface CodexConsoleSessionOptions {
   projectInstanceId: string;

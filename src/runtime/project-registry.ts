@@ -1,6 +1,9 @@
 import type { CodexProjectClient } from './codex-project.ts';
 import type { CodexServerRequest } from '../adapters/codex/app-server-client.ts';
 import type { BridgeRouter } from '../core/router/router.ts';
+import type { BridgeStateStore } from '../storage/binding-store.ts';
+import { ProviderManager } from './provider-manager.ts';
+import type { ProviderDescriptor, ProviderName, ProviderState } from './provider-registry.ts';
 
 export interface ProjectConfig {
   projectInstanceId: string;
@@ -13,6 +16,8 @@ export interface ProjectConfig {
   websocketUrl?: string;
   adapterType?: 'codex' | 'claude-code' | 'qwen-code' | 'opencode';
   qwenExecutable?: string;
+  providers?: ProviderDescriptor[];
+  activeProvider?: ProviderName;
   /**
    * OpenCode (opencode serve) 相关配置。
    *
@@ -30,7 +35,9 @@ export interface ProjectConfig {
 
 export interface ProjectRegistryOptions {
   getProjectConfig: (projectInstanceId: string) => ProjectConfig | null;
-  createClient: (projectInstanceId: string, config: ProjectConfig) => CodexProjectClient;
+  createClient: (projectInstanceId: string, config: ProjectConfig, provider?: ProviderDescriptor) => CodexProjectClient;
+  bridgeStateStore?: BridgeStateStore;
+  allocateWebSocketPort?: () => Promise<number>;
   router?: Pick<BridgeRouter, 'registerProjectHandler'>;
   onStatusChange?: (input: {
     projectInstanceId: string;
@@ -65,6 +72,9 @@ export interface ProjectRegistry {
   resumeThread(projectInstanceId: string, threadId: string): Promise<string>;
   getLastThread(projectInstanceId: string, sessionId: string): Promise<string | null>;
   getHandler(projectInstanceId: string): ((input: { projectInstanceId: string; message: { text: string } }) => Promise<{ text: string } | null>) | null;
+  getProjectProviders(projectInstanceId: string): Promise<ProviderState[]>;
+  getActiveProvider(projectInstanceId: string): Promise<ProviderName | null>;
+  setActiveProvider(projectInstanceId: string, provider: ProviderName): Promise<void>;
   describeProject(projectInstanceId: string): Promise<ProjectState>;
   getProjectDiagnostics(projectInstanceId: string): Promise<ProjectDiagnostics | null>;
   stop(): Promise<void>;
@@ -86,10 +96,16 @@ export interface ProjectDiagnostics {
 }
 
 export function createProjectRegistry(options: ProjectRegistryOptions): ProjectRegistry {
-  // projectId -> { client, bindingCount, sessions: Set<string> }
+  // projectId -> { providerManager, client, bindingCount, sessions: Set<string> }
   const activeProjects = new Map<
     string,
-    { client: CodexProjectClient; bindingCount: number; sessions: Set<string>; config: ProjectConfig }
+    {
+      client: CodexProjectClient;
+      providerManager: ProviderManager;
+      bindingCount: number;
+      sessions: Set<string>;
+      config: ProjectConfig;
+    }
   >();
   const diagnosticsByProjectId = new Map<string, ProjectDiagnostics>();
   const knownProjectIds = new Set<string>();
@@ -287,19 +303,30 @@ export function createProjectRegistry(options: ProjectRegistryOptions): ProjectR
     };
   }
 
-  function createEntry(projectId: string, config: ProjectConfig) {
-    const client = options.createClient(projectId, config);
+  async function createEntry(projectId: string, config: ProjectConfig) {
+    const providerManager = new ProviderManager({
+      projectConfig: config,
+      createClient: (input) => options.createClient(projectId, { ...input }, input.provider),
+      getPersistedState: () => options.bridgeStateStore?.getProjectState(projectId) ?? null,
+      setPersistedState: (state) => options.bridgeStateStore?.setProjectState(state),
+      allocatePort: options.allocateWebSocketPort,
+      onClientCreated: (_, client) => {
+        attachServerRequestHandler(projectId, client);
+        attachStatusHandler(projectId, client);
+        attachTextDeltaHandler(projectId, client);
+        attachThreadChangedHandler(projectId, client);
+      },
+    });
+    const client = providerManager.getClient();
+    await providerManager.ensureActiveClient();
     const entry = {
       client,
+      providerManager,
       bindingCount: 0,
       sessions: new Set<string>(),
       config,
     };
     activeProjects.set(projectId, entry);
-    attachServerRequestHandler(projectId, client);
-    attachStatusHandler(projectId, client);
-    attachTextDeltaHandler(projectId, client);
-    attachThreadChangedHandler(projectId, client);
 
     if (options.router) {
       options.router.registerProjectHandler(projectId, async ({ message }) => {
@@ -323,21 +350,22 @@ export function createProjectRegistry(options: ProjectRegistryOptions): ProjectR
   async function disconnectProject(projectId: string): Promise<void> {
     const entry = activeProjects.get(projectId);
     if (entry) {
-      await entry.client.stop();
+      await entry.providerManager.stop();
       activeProjects.delete(projectId);
     }
   }
 
   async function startThreadForEntry(
     projectId: string,
-    entry: { client: CodexProjectClient; bindingCount: number; sessions: Set<string>; config: ProjectConfig },
+    entry: { providerManager: ProviderManager; bindingCount: number; sessions: Set<string>; config: ProjectConfig },
     threadOptions?: { cwd?: string; force?: boolean },
   ): Promise<string> {
-    if (entry.client.startThread === undefined) {
+    const client = await entry.providerManager.ensureActiveClient();
+    if (client.startThread === undefined) {
       throw new Error(`Project ${projectId} does not support starting threads`);
     }
 
-    const threadId = await entry.client.startThread({
+    const threadId = await client.startThread({
       cwd: threadOptions?.cwd ?? entry.config.cwd,
       force: threadOptions?.force ?? false,
     });
@@ -353,14 +381,15 @@ export function createProjectRegistry(options: ProjectRegistryOptions): ProjectR
 
   async function resumeThreadForEntry(
     projectId: string,
-    entry: { client: CodexProjectClient; bindingCount: number; sessions: Set<string>; config: ProjectConfig },
+    entry: { providerManager: ProviderManager; bindingCount: number; sessions: Set<string>; config: ProjectConfig },
     threadId: string,
   ): Promise<string> {
-    if (entry.client.resumeThread === undefined) {
+    const client = await entry.providerManager.ensureActiveClient();
+    if (client.resumeThread === undefined) {
       throw new Error(`Project ${projectId} does not support thread resume`);
     }
 
-    const resumedThreadId = await entry.client.resumeThread({ threadId, cwd: entry.config.cwd });
+    const resumedThreadId = await client.resumeThread({ threadId, cwd: entry.config.cwd });
 
     if (options.setLastThread !== undefined) {
       for (const sessionId of entry.sessions) {
@@ -430,11 +459,11 @@ export function createProjectRegistry(options: ProjectRegistryOptions): ProjectR
     let created = false;
 
     if (!entry) {
-      entry = createEntry(projectId, config);
+      entry = await createEntry(projectId, config);
       created = true;
     } else if (JSON.stringify(entry.config) !== JSON.stringify(config)) {
       await disconnectProject(projectId);
-      entry = createEntry(projectId, config);
+      entry = await createEntry(projectId, config);
       created = true;
     }
 
@@ -469,7 +498,8 @@ export function createProjectRegistry(options: ProjectRegistryOptions): ProjectR
         if (bindingOptions?.restore === true && isNewSession) {
           if (options.getLastThread !== undefined) {
             const lastThread = options.getLastThread(event.projectId, event.sessionId);
-            if (lastThread !== null && entry.client.resumeThread !== undefined) {
+            const activeClient = await entry.providerManager.ensureActiveClient();
+            if (lastThread !== null && activeClient.resumeThread !== undefined) {
               try {
                 await resumeThreadForEntry(event.projectId, entry, lastThread);
                 return;
@@ -487,7 +517,8 @@ export function createProjectRegistry(options: ProjectRegistryOptions): ProjectR
           }
         }
 
-        if ((created || isNewSession) && entry.client.startThread !== undefined) {
+        const activeClient = await entry.providerManager.ensureActiveClient();
+        if ((created || isNewSession) && activeClient.startThread !== undefined) {
           try {
             await startThreadForEntry(event.projectId, entry, { cwd: entry.config.cwd, force: true });
           } catch (error) {
@@ -560,7 +591,8 @@ export function createProjectRegistry(options: ProjectRegistryOptions): ProjectR
 
       return async ({ message }) => {
         try {
-          const text = await entry.client.generateReply({ text: message.text });
+          const client = await entry.providerManager.ensureActiveClient();
+          const text = await client.generateReply({ text: message.text });
           return { text };
         } catch (error) {
           setProjectDiagnostics(projectInstanceId, {
@@ -579,11 +611,12 @@ export function createProjectRegistry(options: ProjectRegistryOptions): ProjectR
         throw new Error(`Project ${projectInstanceId} is not active`);
       }
 
-      if (entry.client.executeCommand === undefined) {
+      const client = await entry.providerManager.ensureActiveClient();
+      if (client.executeCommand === undefined) {
         throw new Error(`Project ${projectInstanceId} does not support structured Codex commands`);
       }
 
-      return await entry.client.executeCommand(input);
+      return await client.executeCommand(input);
     },
 
     async resumeThread(projectInstanceId: string, threadId: string): Promise<string> {
@@ -592,11 +625,12 @@ export function createProjectRegistry(options: ProjectRegistryOptions): ProjectR
         throw new Error(`Project ${projectInstanceId} is not active`);
       }
 
-      if (entry.client.resumeThread === undefined) {
+      const client = await entry.providerManager.ensureActiveClient();
+      if (client.resumeThread === undefined) {
         throw new Error(`Project ${projectInstanceId} does not support thread resume`);
       }
 
-      const resumedThreadId = await entry.client.resumeThread({ threadId });
+      const resumedThreadId = await client.resumeThread({ threadId });
       if (options.setLastThread !== undefined) {
         for (const sessionId of entry.sessions) {
           options.setLastThread(projectInstanceId, sessionId, resumedThreadId);
@@ -608,6 +642,79 @@ export function createProjectRegistry(options: ProjectRegistryOptions): ProjectR
 
     async getLastThread(projectInstanceId: string, sessionId: string): Promise<string | null> {
       return options.getLastThread?.(projectInstanceId, sessionId) ?? null;
+    },
+
+    async getProjectProviders(projectInstanceId: string): Promise<ProviderState[]> {
+      const entry = activeProjects.get(projectInstanceId);
+      if (!entry) {
+        const config = options.getProjectConfig(projectInstanceId);
+        if (!config) {
+          return [];
+        }
+
+        const providerManager = new ProviderManager({
+          projectConfig: config,
+          createClient: (input) => options.createClient(projectInstanceId, { ...input }, input.provider),
+          allocatePort: options.allocateWebSocketPort,
+        });
+
+        return providerManager.getProviderStates().map((state) => ({
+          provider: state.provider,
+          transport: state.transport,
+          active: state.active,
+          started: state.started,
+          ...(state.port !== undefined ? { port: state.port } : {}),
+        }));
+      }
+
+      return entry.providerManager.getProviderStates().map((state) => ({
+        provider: state.provider,
+        transport: state.transport,
+        active: state.active,
+        started: state.started,
+        ...(state.port !== undefined ? { port: state.port } : {}),
+      }));
+    },
+
+    async getActiveProvider(projectInstanceId: string): Promise<ProviderName | null> {
+      const entry = activeProjects.get(projectInstanceId);
+      if (entry) {
+        return entry.providerManager.getActiveProvider();
+      }
+
+      const persistedState = options.bridgeStateStore?.getProjectState(projectInstanceId);
+      if (persistedState?.activeProvider !== undefined) {
+        return persistedState.activeProvider as ProviderName;
+      }
+
+      const config = options.getProjectConfig(projectInstanceId);
+      if (!config) {
+        return null;
+      }
+
+      return config.activeProvider ?? config.providers?.[0]?.provider ?? 'codex';
+    },
+
+    async setActiveProvider(projectInstanceId: string, provider: ProviderName): Promise<void> {
+      const entry = activeProjects.get(projectInstanceId);
+      if (!entry) {
+        const config = options.getProjectConfig(projectInstanceId);
+        if (!config) {
+          throw new Error(`Project ${projectInstanceId} is not active`);
+        }
+
+        const providerManager = new ProviderManager({
+          projectConfig: config,
+          createClient: (input) => options.createClient(projectInstanceId, { ...input }, input.provider),
+          getPersistedState: () => options.bridgeStateStore?.getProjectState(projectInstanceId) ?? null,
+          setPersistedState: (state) => options.bridgeStateStore?.setProjectState(state),
+          allocatePort: options.allocateWebSocketPort,
+        });
+        await providerManager.setActiveProvider(provider);
+        return;
+      }
+
+      await entry.providerManager.setActiveProvider(provider);
     },
 
     async describeProject(projectInstanceId: string): Promise<ProjectState> {

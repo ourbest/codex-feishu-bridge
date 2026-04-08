@@ -7,6 +7,7 @@ export interface RuntimeEnv {
   BRIDGE_PORT?: string;
   BRIDGE_STORAGE_PATH?: string;
   BRIDGE_PROJECTS_FILE?: string;
+  BRIDGE_PROJECTS_ROOT?: string;
 }
 
 export interface LocalDevLarkTransport extends LarkTransport {
@@ -45,6 +46,11 @@ export function resolveStoragePath(env: RuntimeEnv = process.env): string {
 
 export function resolveProjectsFilePath(env: RuntimeEnv = process.env): string {
   return env.BRIDGE_PROJECTS_FILE ?? './projects.json';
+}
+
+export function resolveProjectsRootPath(env: RuntimeEnv = process.env): string | undefined {
+  const rootPath = env.BRIDGE_PROJECTS_ROOT?.trim();
+  return rootPath === undefined || rootPath === '' ? undefined : rootPath;
 }
 
 export function createLocalDevLarkTransport(options?: {

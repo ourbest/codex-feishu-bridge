@@ -33,20 +33,15 @@ Edit `projects.json` with your project paths:
   "projects": [
     {
       "projectInstanceId": "my-project",
-      "command": "codex",
-      "args": ["app-server"],
-      "cwd": "/path/to/your/project",
-      "serviceName": "my-project",
-      "transport": "stdio",
-      "adapterType": "codex"
+      "cwd": "/path/to/your/project"
     },
     {
       "projectInstanceId": "my-qwen-project",
       "cwd": "/path/to/your/project",
-      "serviceName": "my-qwen-project",
-      "transport": "websocket",
-      "adapterType": "qwen-code",
-      "qwenExecutable": "/opt/homebrew/bin/qwen"
+      "providers": [
+        { "provider": "codex", "transport": "stdio" },
+        { "provider": "qwen", "transport": "stdio" }
+      ]
     }
   ]
 }
@@ -61,16 +56,15 @@ Edit `projects.json` with your project paths:
   "projects": [
     {
       "projectInstanceId": "repo-a",
-      "adapterType": "opencode",
       "cwd": "/path/to/repo-a",
-      "serviceName": "repo-a",
-      "transport": "stdio",
       "opencodeHostname": "127.0.0.1",
       "opencodePort": 4101
     }
   ]
 }
 ```
+
+If `providers` is omitted or set to `[]`, the bridge uses the default provider list: `codex`, `cc`, and `qwen`.
 
 ### 3. Configure Feishu (optional)
 
@@ -97,14 +91,11 @@ The bridge listens on `http://127.0.0.1:3000` and stores bindings in `./data/bri
 | Field | Required | Description |
 |-------|----------|-------------|
 | `projectInstanceId` | Yes | Unique identifier for the project |
-| `command` | Yes | Command to start Codex (e.g., `codex`) |
-| `args` | Yes | Arguments, typically `["app-server"]` |
 | `cwd` | Yes | Working directory for the project |
-| `serviceName` | Yes | Display name for pm2/logs |
-| `transport` | Yes | `stdio` or `websocket` |
-| `websocketUrl` | No | Required for `websocket` transport |
-| `adapterType` | No | `codex` (default), `claude-code`, `qwen-code`, `opencode` |
-| `qwenExecutable` | No | Full path to the Qwen binary for Qwen-backed projects |
+| `providers` | No | Provider list; omit or set `[]` to use the default `codex` / `cc` / `qwen` list |
+| `providers[].provider` | Yes | `codex`, `cc`, or `qwen` |
+| `providers[].transport` | No | `stdio` or `websocket` (defaults to `stdio`) |
+| `providers[].port` | No | WebSocket port; if omitted, the bridge picks one automatically |
 | `opencodeHostname` | No | OpenCode server hostname (default `127.0.0.1`) |
 | `opencodePort` | No | OpenCode server port (recommended to set per repo) |
 | `opencodeCommand` | No | OpenCode executable (default `opencode`) |
@@ -121,6 +112,9 @@ In a bound Feishu chat, use these commands:
 | `//bind <projectId>` | Bind this chat to a project |
 | `//unbind` | Unbind this chat |
 | `//list` | Show current binding |
+| `//projects` | List all visible projects |
+| `//providers` | List providers for the bound project |
+| `//provider <name>` | Switch the active provider for the bound project |
 | `//status` | Show bridge and Codex state |
 | `//sessions` | Alias for `//status` |
 | `//read <path>` | Read a file from the project's `cwd` |
@@ -219,6 +213,7 @@ The `//restart` command exits with code 0, and pm2 automatically starts a fresh 
 | `BRIDGE_PORT` | `3000` | Server port |
 | `BRIDGE_STORAGE_PATH` | `./data/bridge.json` | Binding store path |
 | `BRIDGE_PROJECTS_FILE` | `./projects.json` | Projects config path |
+| `BRIDGE_PROJECTS_ROOT` | not set | Auto-discover projects from non-hidden subdirectories |
 
 ### Feishu
 

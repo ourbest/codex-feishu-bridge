@@ -1,5 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createInterface } from 'node:readline';
+import { allocateWebSocketPort } from './websocket-port.ts';
 
 export interface CodexClientInfo {
   name: string;
@@ -431,6 +432,14 @@ export class CodexAppServerClient {
       args.push('--listen', websocketUrl ?? 'ws://127.0.0.1:0');
     }
     return args;
+  }
+
+  private async resolveAllocatedWebSocketPort(): Promise<number> {
+    if (this.options.allocateWebSocketPort !== undefined) {
+      return await this.options.allocateWebSocketPort();
+    }
+
+    return await allocateWebSocketPort();
   }
 
   private async resolveWebSocketUrl(): Promise<string> {

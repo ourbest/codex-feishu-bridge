@@ -25,10 +25,25 @@ export interface BindingRecord {
   sessionId: string;
 }
 
+export interface BridgeProjectStateRecord {
+  projectInstanceId: string;
+  activeProvider?: string;
+  websocketPorts?: Record<string, number>;
+  startedProviders?: string[];
+}
+
+export interface BridgeStateStore {
+  getProjectState(projectInstanceId: string): BridgeProjectStateRecord | null;
+  getAllProjectStates(): BridgeProjectStateRecord[];
+  setProjectState(state: BridgeProjectStateRecord): void;
+  deleteProjectState(projectInstanceId: string): void;
+}
+
 export class InMemoryBindingStore implements BindingStore {
   private readonly projectToSession = new Map<string, string>();
   private readonly sessionToProject = new Map<string, string>();
   private readonly lastThreads = new Map<string, Map<string, string>>();
+  private readonly projectStates = new Map<string, BridgeProjectStateRecord>();
 
   getSessionByProject(projectInstanceId: string): string | null {
     return this.projectToSession.get(projectInstanceId) ?? null;
@@ -94,9 +109,46 @@ export class InMemoryBindingStore implements BindingStore {
       }
     }
   }
+
+  getProjectState(projectInstanceId: string): BridgeProjectStateRecord | null {
+    const state = this.projectStates.get(projectInstanceId);
+    if (state === undefined) {
+      return null;
+    }
+
+    return {
+      projectInstanceId: state.projectInstanceId,
+      ...(state.activeProvider !== undefined ? { activeProvider: state.activeProvider } : {}),
+      ...(state.websocketPorts !== undefined ? { websocketPorts: { ...state.websocketPorts } } : {}),
+      ...(state.startedProviders !== undefined ? { startedProviders: [...state.startedProviders] } : {}),
+    };
+  }
+
+  getAllProjectStates(): BridgeProjectStateRecord[] {
+    return Array.from(this.projectStates.values()).map((state) => ({
+      projectInstanceId: state.projectInstanceId,
+      ...(state.activeProvider !== undefined ? { activeProvider: state.activeProvider } : {}),
+      ...(state.websocketPorts !== undefined ? { websocketPorts: { ...state.websocketPorts } } : {}),
+      ...(state.startedProviders !== undefined ? { startedProviders: [...state.startedProviders] } : {}),
+    }));
+  }
+
+  setProjectState(state: BridgeProjectStateRecord): void {
+    this.projectStates.set(state.projectInstanceId, {
+      projectInstanceId: state.projectInstanceId,
+      ...(state.activeProvider !== undefined ? { activeProvider: state.activeProvider } : {}),
+      ...(state.websocketPorts !== undefined ? { websocketPorts: { ...state.websocketPorts } } : {}),
+      ...(state.startedProviders !== undefined ? { startedProviders: [...state.startedProviders] } : {}),
+    });
+  }
+
+  deleteProjectState(projectInstanceId: string): void {
+    this.projectStates.delete(projectInstanceId);
+  }
 }
 
 export interface BindingSnapshot {
   bindings: BindingRecord[];
   threadMemories: ThreadMemoryRecord[];
+  projectStates: BridgeProjectStateRecord[];
 }

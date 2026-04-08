@@ -1,5 +1,54 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import path from 'node:path';
+import {
+  cloneProjectConfigEntry as cloneProjectConfigEntryBase,
+  createProjectConfigEntry as createProjectConfigEntryBase,
+  loadProjectsFromFile as loadProjectConfigEntriesFromFile,
+  parseProjectConfigEntries as parseProjectConfigEntriesBase,
+  normalizeProjectConfig,
+  resolvePathLikeInput,
+  writeProjectsFile as writeProjectConfigFile,
+  type ProjectConfigEntry as ProjectConfigFileEntry,
+} from './project-config.ts';
+
+export type ProjectConfigEntry = ProjectConfigFileEntry;
+export const cloneProjectConfigEntry = cloneProjectConfigEntryBase;
+export const createProjectConfigEntry = createProjectConfigEntryBase;
+export const writeProjectsFile = writeProjectConfigFile;
+
+function normalizeProjectConfigEntry(entry: ProjectConfigFileEntry): ProjectConfigEntry {
+  const project = cloneProjectConfigEntryBase(entry);
+  const runtime = createCodexRuntimeConfig({
+    projectInstanceId: entry.projectInstanceId,
+    command: typeof entry.command === 'string' ? entry.command : undefined,
+    args: Array.isArray(entry.args) ? entry.args : undefined,
+    cwd: entry.cwd,
+    model: typeof entry.model === 'string' ? entry.model : undefined,
+    serviceName: typeof entry.serviceName === 'string' ? entry.serviceName : undefined,
+    transport: entry.transport === 'stdio' ? 'stdio' : 'websocket',
+    websocketUrl: typeof entry.websocketUrl === 'string' ? entry.websocketUrl : undefined,
+    qwenExecutable: typeof entry.qwenExecutable === 'string' ? entry.qwenExecutable : undefined,
+    opencodeHostname: typeof entry.opencodeHostname === 'string' ? entry.opencodeHostname : undefined,
+    opencodePort: typeof entry.opencodePort === 'number' ? entry.opencodePort : undefined,
+    opencodeCommand: typeof entry.opencodeCommand === 'string' ? entry.opencodeCommand : undefined,
+    opencodeExtraArgs: Array.isArray(entry.opencodeExtraArgs) ? entry.opencodeExtraArgs : undefined,
+    opencodeUsername: typeof entry.opencodeUsername === 'string' ? entry.opencodeUsername : undefined,
+    opencodePassword: typeof entry.opencodePassword === 'string' ? entry.opencodePassword : undefined,
+  });
+
+  return Object.assign(project, entry, runtime, {
+    providers: entry.providers,
+    adapterType: typeof entry.adapterType === 'string' ? entry.adapterType : 'codex',
+  });
+}
+
+export function parseProjectConfigEntries(raw: string): ProjectConfigEntry[] | null {
+  const entries = parseProjectConfigEntriesBase(raw);
+  return entries === null ? null : entries.map((entry) => normalizeProjectConfigEntry(entry));
+}
+
+export function loadProjectsFromFile(filePath: string): ProjectConfigEntry[] | null {
+  const entries = loadProjectConfigEntriesFromFile(filePath);
+  return entries === null ? null : entries.map((entry) => normalizeProjectConfigEntry(entry));
+}
 
 export interface RuntimeEnvCodexConfig {
   BRIDGE_CODEX_PROJECTS_JSON?: string;
@@ -33,89 +82,7 @@ export interface CodexRuntimeConfig {
   opencodePassword?: string;
 }
 
-const SERIALIZED_CWD = Symbol('serializedCwd');
-
-type ProjectConfigEntryMetadata = {
-  [SERIALIZED_CWD]?: string;
-};
-
 export type CodexProjectRuntimeConfig = CodexRuntimeConfig;
-
-export type ProjectConfigEntry = CodexRuntimeConfig & ProjectConfigEntryMetadata;
-
-export function cloneProjectConfigEntry(entry: ProjectConfigEntry): ProjectConfigEntry {
-  return createProjectConfigEntry(entry, readSerializedCwd(entry));
-}
-
-export function writeProjectsFile(filePath: string, projects: ProjectConfigEntry[]): void {
-  const snapshot = {
-    projects: projects.map((entry) => {
-      const serializedCwd = readSerializedCwd(entry);
-      return {
-        ...entry,
-        ...(serializedCwd !== undefined ? { cwd: serializedCwd } : {}),
-      };
-    }),
-  };
-  writeFileSync(filePath, `${JSON.stringify(snapshot, null, 2)}\n`, 'utf8');
-}
-
-export function resolvePathLikeInput(value: string | undefined, homeDir: string | undefined = process.env.HOME): string | undefined {
-  const trimmed = value?.trim();
-  if (trimmed === undefined || trimmed === '') {
-    return undefined;
-  }
-
-  if (trimmed === '~') {
-    return homeDir?.trim() || undefined;
-  }
-
-  if (trimmed.startsWith('~/')) {
-    const resolvedHome = homeDir?.trim();
-    if (!resolvedHome) {
-      return trimmed.slice(2);
-    }
-
-    return path.join(resolvedHome, trimmed.slice(2));
-  }
-
-  return trimmed;
-}
-
-export function parseProjectConfigEntries(raw: string): ProjectConfigEntry[] | null {
-  if (raw.trim() === '') {
-    return null;
-  }
-
-  const parsed = JSON.parse(raw) as { projects?: Array<Partial<CodexRuntimeConfig> & { projectInstanceId: string }> };
-  if (!Array.isArray(parsed.projects)) {
-    return null;
-  }
-
-  return parsed.projects
-    .filter((entry): entry is Partial<CodexRuntimeConfig> & { projectInstanceId: string } =>
-      typeof entry === 'object' &&
-      entry !== null &&
-      typeof entry.projectInstanceId === 'string' &&
-      entry.projectInstanceId.trim() !== ''
-    )
-    .map((entry) => {
-      const normalized = normalizeProjectConfig(entry);
-      return createProjectConfigEntry(normalized, typeof entry.cwd === 'string' && entry.cwd.trim() !== '' ? entry.cwd : undefined);
-    });
-}
-
-export function loadProjectsFromFile(filePath: string): ProjectConfigEntry[] | null {
-  try {
-    if (!existsSync(filePath)) {
-      return null;
-    }
-    const raw = readFileSync(filePath, 'utf8');
-    return parseProjectConfigEntries(raw);
-  } catch {
-    return null;
-  }
-}
 
 function parseArgs(value: string | undefined): string[] {
   if (value === undefined || value.trim() === '') {
@@ -128,49 +95,6 @@ function parseArgs(value: string | undefined): string[] {
   }
 
   return parsed;
-}
-
-function normalizeProjectConfig(input: Partial<CodexRuntimeConfig> & { projectInstanceId: string }): CodexRuntimeConfig {
-  const transport = input.transport ?? 'websocket';
-  const model = input.model?.trim();
-  const adapterType = input.adapterType ?? 'codex';
-  const result: CodexRuntimeConfig = {
-    projectInstanceId: input.projectInstanceId.trim(),
-    command: input.command?.trim() || 'codex',
-    args: input.args ?? ['app-server'],
-    cwd: resolvePathLikeInput(input.cwd),
-    ...(model !== undefined && model !== '' ? { model } : {}),
-    serviceName: input.serviceName?.trim() || 'codex-bridge',
-    transport,
-    websocketUrl: transport === 'stdio' ? undefined : input.websocketUrl?.trim() || 'ws://127.0.0.1:4000',
-    adapterType,
-    ...(input.qwenExecutable?.trim() ? { qwenExecutable: input.qwenExecutable.trim() } : {}),
-    ...(input.opencodeHostname?.trim() ? { opencodeHostname: input.opencodeHostname.trim() } : {}),
-    ...(typeof input.opencodePort === 'number' ? { opencodePort: input.opencodePort } : {}),
-    ...(input.opencodeCommand?.trim() ? { opencodeCommand: input.opencodeCommand.trim() } : {}),
-    ...(Array.isArray(input.opencodeExtraArgs) ? { opencodeExtraArgs: input.opencodeExtraArgs } : {}),
-    ...(input.opencodeUsername?.trim() ? { opencodeUsername: input.opencodeUsername.trim() } : {}),
-    ...(input.opencodePassword?.trim() ? { opencodePassword: input.opencodePassword.trim() } : {}),
-  };
-  return result;
-}
-
-function createProjectConfigEntry(entry: CodexRuntimeConfig, serializedCwd?: string): ProjectConfigEntry {
-  const projectConfig = { ...entry } as ProjectConfigEntry;
-  if (serializedCwd !== undefined) {
-    Object.defineProperty(projectConfig, SERIALIZED_CWD, {
-      value: serializedCwd,
-      enumerable: false,
-      configurable: true,
-      writable: true,
-    });
-  }
-
-  return projectConfig;
-}
-
-function readSerializedCwd(entry: ProjectConfigEntry): string | undefined {
-  return entry[SERIALIZED_CWD];
 }
 
 function parseProjectConfigs(value: string | undefined, homeDir: string | undefined): CodexRuntimeConfig[] | null {
@@ -189,6 +113,14 @@ function parseProjectConfigs(value: string | undefined, homeDir: string | undefi
     }
 
     const record = entry as Partial<CodexRuntimeConfig> & { projectInstanceId: string };
+    normalizeProjectConfig(
+      {
+        projectInstanceId: record.projectInstanceId,
+        cwd: record.cwd,
+        providers: [],
+      },
+      { homeDir },
+    );
     const transport = record.transport ?? 'websocket';
 
     return {
@@ -228,11 +160,11 @@ export function resolveCodexRuntimeConfigs(env: RuntimeEnvCodexConfig = process.
   }
 
   return [
-    normalizeProjectConfig({
+    createCodexRuntimeConfig({
       projectInstanceId,
       command: env.BRIDGE_CODEX_COMMAND?.trim() || 'codex',
       args: parseArgs(env.BRIDGE_CODEX_ARGS_JSON),
-      cwd: resolvePathLikeInput(env.BRIDGE_CODEX_CWD, env.HOME ?? process.env.HOME),
+      cwd: env.BRIDGE_CODEX_CWD?.trim(),
       model: env.BRIDGE_CODEX_MODEL?.trim(),
       serviceName: env.BRIDGE_CODEX_SERVICE_NAME?.trim() || 'codex-bridge',
       transport: env.BRIDGE_CODEX_TRANSPORT?.trim() === 'stdio' ? 'stdio' : 'websocket',
@@ -281,6 +213,7 @@ export function createCodexRuntimeConfig(input: {
     ...(Array.isArray(input.opencodeExtraArgs) ? { opencodeExtraArgs: input.opencodeExtraArgs } : {}),
     ...(input.opencodeUsername?.trim() ? { opencodeUsername: input.opencodeUsername.trim() } : {}),
     ...(input.opencodePassword?.trim() ? { opencodePassword: input.opencodePassword.trim() } : {}),
+    adapterType: 'codex' as const,
   };
-  return createProjectConfigEntry(entry, input.cwd?.trim() || undefined);
+  return createProjectConfigEntry(entry, input.cwd?.trim() || undefined) as unknown as CodexRuntimeConfig;
 }

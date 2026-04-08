@@ -1082,6 +1082,9 @@ test('renders //help as an interactive card for easier reading', async () => {
   };
   assert.equal(card.header?.title?.content, 'codex-bridge help');
   assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('//bind')));
+  assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('//projects')));
+  assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('//providers')));
+  assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('//provider <name>')));
   assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('//new')));
   assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('//approve-auto <minutes>')));
 
@@ -1151,6 +1154,9 @@ test('renders unbound guidance as an interactive card', async () => {
   assert.equal(card.header?.title?.content, 'codex-bridge');
   assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('not bound')));
   assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('//bind <projectId>')));
+  assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('//projects')));
+  assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('//providers')));
+  assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('//provider <name>')));
 
   await app.stop();
 });
@@ -1515,6 +1521,7 @@ test('handles //reload projects by reloading a real projects file and reconcilin
         projects: [
           {
             projectInstanceId: 'project-a',
+            cwd: '/repo/project-a',
             websocketUrl: 'ws://127.0.0.1:4000',
           },
         ],
@@ -1529,7 +1536,7 @@ test('handles //reload projects by reloading a real projects file and reconcilin
   const sentCards: Array<{ sessionId: string; card: { msg_type: 'interactive'; content: string }; fallbackText?: string }> = [];
   const reactions: Array<{ targetMessageId: string; emojiType: string }> = [];
   let eventHandler: ((event: LarkEventPayload) => Promise<void> | void) | null = null;
-  const projectConfigs: Array<{ projectInstanceId: string; websocketUrl: string }> = [];
+  const projectConfigs: Array<{ projectInstanceId: string; websocketUrl: string; cwd: string }> = [];
 
   const registry = createProjectRegistry({
     getProjectConfig(projectInstanceId) {
@@ -1585,6 +1592,7 @@ test('handles //reload projects by reloading a real projects file and reconcilin
       projectConfigs.splice(0, projectConfigs.length, ...projects.map((entry) => ({
         projectInstanceId: entry.projectInstanceId,
         websocketUrl: entry.websocketUrl ?? 'ws://127.0.0.1:4000',
+        cwd: entry.cwd ?? '/repo/project-a',
       })));
       await registry.reconcileProjectConfigs(projectConfigs);
       return [`[codex-bridge] reloaded projects: ${projects.length}`];
