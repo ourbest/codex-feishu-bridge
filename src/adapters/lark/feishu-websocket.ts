@@ -1,4 +1,5 @@
 import type { LarkEventPayload, LarkTransport } from './adapter.ts';
+import type { InboundAttachment } from '../../core/events/message.ts';
 import { buildFeishuPostMessage, isMarkdown } from './md-to-feishu.ts';
 import {
   extractCardActionCommand,
@@ -109,6 +110,7 @@ export function createFeishuWebSocketTransport(options: FeishuWebSocketTransport
           chat_type?: string;
           content?: string;
           create_time?: string;
+          message_type?: string;
         };
       }) {
         const msg = data?.message;
@@ -117,9 +119,41 @@ export function createFeishuWebSocketTransport(options: FeishuWebSocketTransport
         }
 
         let text = '';
+        let attachments: InboundAttachment[] | undefined;
+        const msgType = msg.message_type ?? '';
+
         try {
           const parsed = JSON.parse(msg.content);
-          text = typeof parsed.text === 'string' ? parsed.text : '';
+
+          if (msgType === 'file') {
+            // 文件消息
+            const fileKey = parsed.file_key;
+            const fileName = parsed.file_name ?? 'unknown';
+            if (fileKey) {
+              attachments = [{
+                fileKey,
+                fileName,
+                mimeType: '', // 将在下载时获取
+                fileSize: parsed.file_size ?? 0,
+                attachmentType: 'file',
+              }];
+            }
+          } else if (msgType === 'image') {
+            // 图片消息
+            const imageKey = parsed.image_key;
+            if (imageKey) {
+              attachments = [{
+                fileKey: imageKey,
+                fileName: 'image.png', // 默认名称，将在下载时获取
+                mimeType: 'image/png',
+                fileSize: 0,
+                attachmentType: 'image',
+              }];
+            }
+          } else {
+            // 文本消息
+            text = typeof parsed.text === 'string' ? parsed.text : '';
+          }
         } catch {
           text = '';
         }
@@ -128,6 +162,7 @@ export function createFeishuWebSocketTransport(options: FeishuWebSocketTransport
           sessionId: msg.chat_id,
           messageId: msg.message_id,
           text,
+          attachments,
           senderId: data.sender?.sender_id?.open_id ?? '',
           timestamp: msg.create_time ?? '',
         };

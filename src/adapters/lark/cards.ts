@@ -241,6 +241,51 @@ export function buildApprovalCard(input: {
   });
 }
 
+export function buildFileReceivedCard(input: {
+  files: Array<{
+    originalName: string;
+    savedPath: string;
+    fileSize: number;
+    attachmentType: 'image' | 'file';
+  }>;
+  footerItems?: CardFooterItem[];
+}): FeishuInteractiveCardMessage {
+  const fileLines = input.files.map((f) => {
+    const sizeKB = (f.fileSize / 1024).toFixed(1);
+    // 只显示文件名，不泄露服务器绝对路径
+    const displayName = f.originalName;
+    return `📄 ${displayName} (${sizeKB} KB)`;
+  });
+
+  const elements: Array<Record<string, unknown>> = [
+    {
+      tag: 'markdown',
+      content: ['✅ **已收到以下文件：**', '', ...fileLines].join('\n'),
+    },
+  ];
+
+  if (input.footerItems !== undefined && input.footerItems.length > 0) {
+    elements.push({ tag: 'hr' });
+    elements.push(buildFooterMarkdown(input.footerItems));
+  }
+
+  return buildInteractiveCardMessage({
+    schema: '2.0',
+    config: {
+      enable_forward: true,
+      update_multi: true,
+      width_mode: 'fill',
+    },
+    header: {
+      template: 'green',
+      title: plainText('文件上传'),
+    },
+    body: {
+      elements,
+    },
+  });
+}
+
 export function buildStartupNotificationCard(input: { title: string; bodyMarkdown: string }): FeishuInteractiveCardMessage {
   return buildInteractiveCardMessage({
     schema: '2.0',

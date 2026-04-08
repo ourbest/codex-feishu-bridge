@@ -23,8 +23,11 @@ import {
   buildProjectReplyCard,
   buildUnavailableProjectCard,
   buildUnboundCard,
+  buildFileReceivedCard,
   type CardFooterItem,
 } from './adapters/lark/cards.ts';
+import { saveMessageAttachments, type FileUploadResult } from './services/file-upload-service.ts';
+import type { InboundAttachment } from './core/events/message.ts';
 
 const MAX_READ_CARD_CHARS = 12000;
 
@@ -349,6 +352,8 @@ export function createBridgeApp(options: {
   onInboundMessage?: (message: { sessionId: string; messageId: string; senderId: string; text: string }) => void;
   consoleHandler?: MessageHandler;
   onRestartRequested?: (input: { sessionId: string; senderId: string; messageId: string; text: string }) => Promise<void>;
+  /** 下载飞书消息附件的函数 */
+  downloadFile?: (opts: { messageId: string; fileKey: string; type: 'image' | 'file' }) => Promise<{ buffer: Buffer; fileName: string; mimeType: string; fileSize: number }>;
   projectRegistry: {
     describeProject(projectInstanceId: string): Promise<ProjectState>;
     getProjectDiagnostics?(projectInstanceId: string): Promise<ProjectDiagnostics | null>;
@@ -514,7 +519,7 @@ export function createBridgeApp(options: {
     await handleInboundMessage(message, false);
   });
 
-  async function handleInboundMessage(message: { sessionId: string; text: string; senderId: string; messageId: string }, react: boolean): Promise<void> {
+  async function handleInboundMessage(message: InboundMessage, react: boolean): Promise<void> {
     options.onInboundMessage?.({
       sessionId: message.sessionId,
       messageId: message.messageId,
@@ -688,6 +693,55 @@ export function createBridgeApp(options: {
 
     const boundProjectId = await bindingService.getProjectBySession(message.sessionId);
     const boundProjectConfig = boundProjectId === null ? null : options.projectRegistry.getProjectConfig?.(boundProjectId) ?? null;
+
+    // 处理文件附件
+    let nonImageFiles: FileUploadResult['savedFiles'] = [];
+    if (message.attachments && message.attachments.length > 0 && boundProjectId !== null && options.downloadFile) {
+      const projectConfig = boundProjectConfig;
+      if (projectConfig?.cwd) {
+        try {
+          const uploadResult = await saveMessageAttachments({
+            cwd: projectConfig.cwd,
+            attachments: message.attachments,
+            downloadFile: async (attachment) => {
+              const fileType = attachment.attachmentType ?? (attachment.mimeType.startsWith('image/') ? 'image' : 'file');
+              const downloaded = await options.downloadFile!({
+                messageId: message.messageId,
+                fileKey: attachment.fileKey,
+                type: fileType,
+              });
+              // 更新附件信息
+              attachment.fileName = downloaded.fileName;
+              attachment.mimeType = downloaded.mimeType;
+              attachment.fileSize = downloaded.fileSize;
+              return downloaded.buffer;
+            },
+          });
+
+          // 分离图片和非图片文件
+          nonImageFiles = uploadResult.savedFiles.filter(f => f.attachmentType !== 'image');
+          const images = uploadResult.savedFiles.filter(f => f.attachmentType === 'image');
+
+          if (images.length > 0) {
+            // 图片：追加到消息文本中转发给 Codex
+            const imageInfo = `\n\n📷 图片附件 (${images.length} 张):\n${images.map(f => `- ${f.originalName} -> ${f.savedPath}`).join('\n')}`;
+            message.text = message.text + imageInfo;
+          }
+
+          if (nonImageFiles.length > 0) {
+            // 非图片文件：记录日志，稍后回复收到卡片
+            const fileNames = nonImageFiles.map(f => f.originalName).join(', ');
+            console.log(`[file-upload] received ${nonImageFiles.length} non-image file(s) for project ${boundProjectId}: ${fileNames}`);
+          }
+        } catch (error) {
+          const errorMsg = error instanceof Error ? error.message : String(error);
+          console.error(`[file-upload] failed to process attachments: ${errorMsg}`);
+        }
+      } else {
+        console.warn(`[file-upload] skipping attachments for project ${boundProjectId}: cwd not configured`);
+      }
+    }
+
     const statusFooterItems = boundProjectId === null ? [] : buildProjectFooterItems(boundProjectId, boundProjectConfig);
     const statusCardResult =
       boundProjectId === null
@@ -759,6 +813,20 @@ export function createBridgeApp(options: {
         card: replyCard,
         fallbackText: outboundMessage.text,
       });
+
+      // 如果有非图片文件，回复收到文件卡片
+      if (nonImageFiles.length > 0) {
+        const fileReceivedCard = buildFileReceivedCard({
+          files: nonImageFiles,
+          footerItems: buildProjectFooterItems(projectId, projectConfig),
+        });
+        await larkAdapter.sendCard({
+          targetSessionId: message.sessionId,
+          card: fileReceivedCard,
+          fallbackText: `已收到 ${nonImageFiles.length} 个文件: ${nonImageFiles.map(f => f.originalName).join(', ')}`,
+        });
+      }
+
       activeStatusCards.delete(message.sessionId);
       return;
     }
@@ -766,19 +834,44 @@ export function createBridgeApp(options: {
     // Unbound session — reply with unbound info
     const bound = boundProjectId ?? await bindingService.getProjectBySession(message.sessionId);
     if (bound === null) {
-      const fallbackText =
-        `[codex-bridge] unbound session. chatId: ${message.sessionId}, openId: ${message.senderId}\n\nCommands:\n  //bind <projectId> - bind this chat to a project\n  //unbind - unbind this chat\n  //list - list all bindings\n  //new - start a new codex thread for this chat\n  //status - show bridge and codex state\n  //reload projects - reload projects.json\n  //help - show this help`;
+      const hasAttachments = message.attachments !== undefined && message.attachments.length > 0;
+      const attachmentNote = hasAttachments
+        ? '\n\n⚠️ File attachments are not supported for unbound chats. Please bind this chat first using //bind <projectId>.'
+        : '';
 
-      await larkAdapter.sendCard({
-        targetSessionId: message.sessionId,
-        card: buildUnboundCard({
-          sessionId: message.sessionId,
-          senderId: message.senderId,
-          bridgeCommands: [...HELP_CARD_BRIDGE_COMMANDS],
-          codexCommands: [...HELP_CARD_CODEX_COMMANDS],
-        }),
-        fallbackText,
-      });
+      const fallbackText =
+        `[codex-bridge] unbound session. chatId: ${message.sessionId}, openId: ${message.senderId}${attachmentNote}\n\nCommands:\n  //bind <projectId> - bind this chat to a project\n  //unbind - unbind this chat\n  //list - list all bindings\n  //new - start a new codex thread for this chat\n  //status - show bridge and codex state\n  //reload projects - reload projects.json\n  //help - show this help`;
+
+      if (hasAttachments) {
+        // When there are attachments, use a content card that shows the attachment warning
+        await larkAdapter.sendCard({
+          targetSessionId: message.sessionId,
+          card: buildMarkdownContentCard({
+            title: '未绑定项目',
+            subtitle: message.sessionId,
+            bodyMarkdown: `⚠️ **文件附件在未绑定的聊天中不受支持。**
+
+请先使用以下命令绑定此聊天：
+
+\`\`\`text
+//bind <projectId>
+\`\`\``,
+            template: 'yellow',
+          }),
+          fallbackText,
+        });
+      } else {
+        await larkAdapter.sendCard({
+          targetSessionId: message.sessionId,
+          card: buildUnboundCard({
+            sessionId: message.sessionId,
+            senderId: message.senderId,
+            bridgeCommands: [...HELP_CARD_BRIDGE_COMMANDS],
+            codexCommands: [...HELP_CARD_CODEX_COMMANDS],
+          }),
+          fallbackText,
+        });
+      }
       return;
     }
 

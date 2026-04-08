@@ -1,4 +1,4 @@
-import type { InboundMessage, OutboundMessage } from '../../core/events/message.ts';
+import type { InboundMessage, InboundAttachment, OutboundMessage } from '../../core/events/message.ts';
 import type { OutboundReaction } from '../../core/events/message.ts';
 import type { FeishuInteractiveCardMessage } from './cards.ts';
 
@@ -8,6 +8,7 @@ export interface LarkEventPayload {
   text: string;
   senderId: string;
   timestamp: string;
+  attachments?: InboundAttachment[];
 }
 
 export interface LarkSendResult {
@@ -67,7 +68,7 @@ export class LarkAdapter {
   }
 
   normalizeInboundEvent(event: LarkEventPayload): InboundMessage {
-    return {
+    const result: InboundMessage = {
       source: 'lark',
       sessionId: event.sessionId,
       messageId: event.messageId,
@@ -75,6 +76,12 @@ export class LarkAdapter {
       senderId: event.senderId,
       timestamp: event.timestamp,
     };
+
+    if (event.attachments !== undefined) {
+      result.attachments = event.attachments;
+    }
+
+    return result;
   }
 
   async send(message: OutboundMessage): Promise<LarkSendResult | void> {

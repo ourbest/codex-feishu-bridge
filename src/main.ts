@@ -24,6 +24,7 @@ import { buildStartupNotificationCard } from './adapters/lark/cards.ts';
 import { JsonBindingStore } from './storage/json-binding-store.ts';
 import { createApprovalService } from './runtime/approval-service.ts';
 import { defaultHttpInstance, LoggerLevel, WSClient, EventDispatcher, Client } from '@larksuiteoapi/node-sdk';
+import { createFileDownloadHandler } from './adapters/lark/file-downloader.ts';
 
 /**
  * Extract a human-readable command string from Claude Code request params.
@@ -239,7 +240,7 @@ export async function run(): Promise<void> {
   let app: ReturnType<typeof createBridgeApp> | null = null;
   let restartInFlight = false;
 
-  const { transport, sendToOpenId, sendCardToOpenId } = feishuRuntime !== null && feishuRuntime.wsEnabled
+  const { transport, sendToOpenId, sendCardToOpenId, downloadFile } = feishuRuntime !== null && feishuRuntime.wsEnabled
     ? await createFeishuWebSocketTransportFromRuntime(feishuRuntime)
     : { transport: createLocalDevLarkTransport({
         onSend(message) {
@@ -248,13 +249,14 @@ export async function run(): Promise<void> {
         onReact(message) {
           console.log(`[codex-bridge] reaction -> ${message.targetMessageId}: ${message.emojiType}`);
         },
-      }), sendToOpenId: null, sendCardToOpenId: null };
+      }), sendToOpenId: null, sendCardToOpenId: null, downloadFile: null };
 
   app = createBridgeApp({
     config,
     larkTransport: transport,
     bindingStore: bridgeStore,
     approvalService,
+    downloadFile: downloadFile ?? undefined,
     onRestartRequested: async ({ sessionId, senderId }) => {
       if (restartInFlight) {
         await app?.larkAdapter.send({
@@ -744,6 +746,7 @@ async function createFeishuWebSocketTransportFromRuntime(feishuRuntime: { appId:
     httpInstance: directHttpInstance,
   });
 
+  const downloadHandler = createFileDownloadHandler(restClient);
   const transport = createFeishuWebSocketTransport({
     appId: feishuRuntime.appId,
     appSecret: feishuRuntime.appSecret,
@@ -816,7 +819,7 @@ async function createFeishuWebSocketTransportFromRuntime(feishuRuntime: { appId:
     });
   }
 
-  return { transport, sendToOpenId, sendCardToOpenId };
+  return { transport, sendToOpenId, sendCardToOpenId, downloadFile: downloadHandler };
 }
 
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
