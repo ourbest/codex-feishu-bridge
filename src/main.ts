@@ -13,6 +13,7 @@ import { loadProjectsFromFile, resolveCodexRuntimeConfigs, type ProjectConfigEnt
 import { CodexAppServerClient } from './adapters/codex/app-server-client.ts';
 import { ClaudeCodeClient } from './adapters/claude-code/index.ts';
 import { QwenCodeClient } from './adapters/qwen-code/index.ts';
+import { OpencodeClient } from './adapters/opencode/index.ts';
 import { resolveConsoleRuntimeConfig, runCodexConsoleSession } from './runtime/codex-console.ts';
 import { createProjectRegistry } from './runtime/project-registry.ts';
 import { createProjectConfigWatcher } from './runtime/project-config-watcher.ts';
@@ -470,6 +471,18 @@ export async function run(): Promise<void> {
       return entry;
     },
     createClient: (projectInstanceId: string, config) => {
+      if (config.adapterType === 'opencode') {
+        return new OpencodeClient({
+          projectInstanceId,
+          cwd: config.cwd,
+          command: config.opencodeCommand ?? 'opencode',
+          hostname: config.opencodeHostname ?? '127.0.0.1',
+          port: config.opencodePort,
+          extraArgs: config.opencodeExtraArgs ?? [],
+          username: config.opencodeUsername,
+          password: config.opencodePassword,
+        });
+      }
       if (config.adapterType === 'claude-code') {
         return new ClaudeCodeClient({
           command: 'claude',

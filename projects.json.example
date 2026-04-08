@@ -7,6 +7,15 @@
       "cwd": "/absolute/path/to/project-a",
       "serviceName": "project-a",
       "transport": "stdio"
+    },
+    {
+      "projectInstanceId": "repo-opencode",
+      "adapterType": "opencode",
+      "cwd": "/absolute/path/to/repo-opencode",
+      "serviceName": "repo-opencode",
+      "transport": "stdio",
+      "opencodeHostname": "127.0.0.1",
+      "opencodePort": 4101
     }
   ]
 }

@@ -11,8 +11,21 @@ export interface ProjectConfig {
   serviceName: string;
   transport: 'stdio' | 'websocket';
   websocketUrl?: string;
-  adapterType?: 'codex' | 'claude-code' | 'qwen-code';
+  adapterType?: 'codex' | 'claude-code' | 'qwen-code' | 'opencode';
   qwenExecutable?: string;
+  /**
+   * OpenCode (opencode serve) 相关配置。
+   *
+   * - 当 adapterType = "opencode" 时，bridge 会在首次绑定/首次请求时拉起 `opencode serve`
+   * - hostname/port 用于确定 baseUrl；若不提供 port，将自动分配空闲端口（仅在进程存活期内有效）
+   * - username/password 会通过 HTTP Basic Auth 传递（同时也会作为 OPENCODE_SERVER_* 环境变量注入到 serve 进程）
+   */
+  opencodeHostname?: string;
+  opencodePort?: number;
+  opencodeCommand?: string;
+  opencodeExtraArgs?: string[];
+  opencodeUsername?: string;
+  opencodePassword?: string;
 }
 
 export interface ProjectRegistryOptions {

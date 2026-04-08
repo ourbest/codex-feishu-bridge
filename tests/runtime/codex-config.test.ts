@@ -4,7 +4,13 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
 
-import { loadProjectsFromFile, resolveCodexRuntimeConfig, resolveCodexRuntimeConfigs, writeProjectsFile } from '../../src/runtime/codex-config.ts';
+import {
+  createCodexRuntimeConfig,
+  loadProjectsFromFile,
+  resolveCodexRuntimeConfig,
+  resolveCodexRuntimeConfigs,
+  writeProjectsFile,
+} from '../../src/runtime/codex-config.ts';
 import { createProjectConfigWatcher } from '../../src/runtime/project-config-watcher.ts';
 
 test('returns null when codex runtime is not enabled', () => {
@@ -66,6 +72,25 @@ test('resolves qwen executable from environment override', () => {
       transport: 'websocket',
       websocketUrl: 'ws://127.0.0.1:4000',
       adapterType: 'codex',
+      qwenExecutable: '/opt/homebrew/bin/qwen',
+    },
+  );
+});
+
+test('preserves qwen executable when creating runtime config directly', () => {
+  assert.deepEqual(
+    createCodexRuntimeConfig({
+      projectInstanceId: 'project-a',
+      qwenExecutable: '/opt/homebrew/bin/qwen',
+    }),
+    {
+      projectInstanceId: 'project-a',
+      command: 'codex',
+      args: ['app-server'],
+      cwd: undefined,
+      serviceName: 'codex-bridge',
+      transport: 'websocket',
+      websocketUrl: 'ws://127.0.0.1:4000',
       qwenExecutable: '/opt/homebrew/bin/qwen',
     },
   );

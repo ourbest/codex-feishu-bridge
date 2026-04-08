@@ -5,6 +5,7 @@ coverage/
 .DS_Store
 .env
 .codex/
+.claude/
 data/
 docs/
 projects.json

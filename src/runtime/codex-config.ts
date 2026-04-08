@@ -23,8 +23,14 @@ export interface CodexRuntimeConfig {
   serviceName: string;
   transport: 'stdio' | 'websocket';
   websocketUrl?: string;
-  adapterType?: 'codex' | 'claude-code' | 'qwen-code';
+  adapterType?: 'codex' | 'claude-code' | 'qwen-code' | 'opencode';
   qwenExecutable?: string;
+  opencodeHostname?: string;
+  opencodePort?: number;
+  opencodeCommand?: string;
+  opencodeExtraArgs?: string[];
+  opencodeUsername?: string;
+  opencodePassword?: string;
 }
 
 const SERIALIZED_CWD = Symbol('serializedCwd');
@@ -139,6 +145,12 @@ function normalizeProjectConfig(input: Partial<CodexRuntimeConfig> & { projectIn
     websocketUrl: transport === 'stdio' ? undefined : input.websocketUrl?.trim() || 'ws://127.0.0.1:4000',
     adapterType,
     ...(input.qwenExecutable?.trim() ? { qwenExecutable: input.qwenExecutable.trim() } : {}),
+    ...(input.opencodeHostname?.trim() ? { opencodeHostname: input.opencodeHostname.trim() } : {}),
+    ...(typeof input.opencodePort === 'number' ? { opencodePort: input.opencodePort } : {}),
+    ...(input.opencodeCommand?.trim() ? { opencodeCommand: input.opencodeCommand.trim() } : {}),
+    ...(Array.isArray(input.opencodeExtraArgs) ? { opencodeExtraArgs: input.opencodeExtraArgs } : {}),
+    ...(input.opencodeUsername?.trim() ? { opencodeUsername: input.opencodeUsername.trim() } : {}),
+    ...(input.opencodePassword?.trim() ? { opencodePassword: input.opencodePassword.trim() } : {}),
   };
   return result;
 }
@@ -161,7 +173,7 @@ function readSerializedCwd(entry: ProjectConfigEntry): string | undefined {
   return entry[SERIALIZED_CWD];
 }
 
-function parseProjectConfigs(value: string | undefined): CodexRuntimeConfig[] | null {
+function parseProjectConfigs(value: string | undefined, homeDir: string | undefined): CodexRuntimeConfig[] | null {
   if (value === undefined || value.trim() === '') {
     return null;
   }
@@ -177,18 +189,25 @@ function parseProjectConfigs(value: string | undefined): CodexRuntimeConfig[] | 
     }
 
     const record = entry as Partial<CodexRuntimeConfig> & { projectInstanceId: string };
+    const transport = record.transport ?? 'websocket';
+
     return {
       projectInstanceId: record.projectInstanceId,
       command: record.command?.trim() || 'codex',
       args: Array.isArray(record.args) ? record.args : ['app-server'],
-      cwd: resolvePathLikeInput(record.cwd),
+      cwd: resolvePathLikeInput(record.cwd, homeDir),
       ...(record.model?.trim() ? { model: record.model.trim() } : {}),
       serviceName: record.serviceName?.trim() || 'codex-bridge',
-      transport: record.transport ?? 'websocket',
-      websocketUrl:
-        (record.transport ?? 'websocket') === 'stdio' ? undefined : record.websocketUrl?.trim() || 'ws://127.0.0.1:4000',
+      transport,
+      websocketUrl: transport === 'stdio' ? undefined : record.websocketUrl?.trim() || 'ws://127.0.0.1:4000',
       adapterType: record.adapterType ?? 'codex',
       ...(record.qwenExecutable?.trim() ? { qwenExecutable: record.qwenExecutable.trim() } : {}),
+      ...(record.opencodeHostname?.trim() ? { opencodeHostname: record.opencodeHostname.trim() } : {}),
+      ...(typeof record.opencodePort === 'number' ? { opencodePort: record.opencodePort } : {}),
+      ...(record.opencodeCommand?.trim() ? { opencodeCommand: record.opencodeCommand.trim() } : {}),
+      ...(Array.isArray(record.opencodeExtraArgs) ? { opencodeExtraArgs: record.opencodeExtraArgs } : {}),
+      ...(record.opencodeUsername?.trim() ? { opencodeUsername: record.opencodeUsername.trim() } : {}),
+      ...(record.opencodePassword?.trim() ? { opencodePassword: record.opencodePassword.trim() } : {}),
     };
   });
 }
@@ -198,7 +217,7 @@ function resolveWebSocketUrl(env: RuntimeEnvCodexConfig): string {
 }
 
 export function resolveCodexRuntimeConfigs(env: RuntimeEnvCodexConfig = process.env): CodexRuntimeConfig[] | null {
-  const projects = parseProjectConfigs(env.BRIDGE_CODEX_PROJECTS_JSON);
+  const projects = parseProjectConfigs(env.BRIDGE_CODEX_PROJECTS_JSON, env.HOME ?? process.env.HOME);
   if (projects !== null) {
     return projects;
   }
@@ -208,20 +227,20 @@ export function resolveCodexRuntimeConfigs(env: RuntimeEnvCodexConfig = process.
     return null;
   }
 
-    return [
-      normalizeProjectConfig({
-        projectInstanceId,
-        command: env.BRIDGE_CODEX_COMMAND?.trim() || 'codex',
-        args: parseArgs(env.BRIDGE_CODEX_ARGS_JSON),
-        cwd: resolvePathLikeInput(env.BRIDGE_CODEX_CWD, env.HOME ?? process.env.HOME),
-        model: env.BRIDGE_CODEX_MODEL?.trim(),
-        serviceName: env.BRIDGE_CODEX_SERVICE_NAME?.trim() || 'codex-bridge',
-        transport: env.BRIDGE_CODEX_TRANSPORT?.trim() === 'stdio' ? 'stdio' : 'websocket',
-        websocketUrl: resolveWebSocketUrl(env),
-        qwenExecutable: env.BRIDGE_CODEX_QWEN_EXECUTABLE?.trim(),
-      }),
-    ];
-  }
+  return [
+    normalizeProjectConfig({
+      projectInstanceId,
+      command: env.BRIDGE_CODEX_COMMAND?.trim() || 'codex',
+      args: parseArgs(env.BRIDGE_CODEX_ARGS_JSON),
+      cwd: resolvePathLikeInput(env.BRIDGE_CODEX_CWD, env.HOME ?? process.env.HOME),
+      model: env.BRIDGE_CODEX_MODEL?.trim(),
+      serviceName: env.BRIDGE_CODEX_SERVICE_NAME?.trim() || 'codex-bridge',
+      transport: env.BRIDGE_CODEX_TRANSPORT?.trim() === 'stdio' ? 'stdio' : 'websocket',
+      websocketUrl: resolveWebSocketUrl(env),
+      qwenExecutable: env.BRIDGE_CODEX_QWEN_EXECUTABLE?.trim(),
+    }),
+  ];
+}
 
 export function resolveCodexRuntimeConfig(env: RuntimeEnvCodexConfig = process.env): CodexRuntimeConfig | null {
   return resolveCodexRuntimeConfigs(env)?.[0] ?? null;
@@ -237,6 +256,12 @@ export function createCodexRuntimeConfig(input: {
   transport?: 'stdio' | 'websocket';
   websocketUrl?: string;
   qwenExecutable?: string;
+  opencodeHostname?: string;
+  opencodePort?: number;
+  opencodeCommand?: string;
+  opencodeExtraArgs?: string[];
+  opencodeUsername?: string;
+  opencodePassword?: string;
 }): CodexRuntimeConfig {
   const model = input.model?.trim();
   const entry = {
@@ -249,6 +274,13 @@ export function createCodexRuntimeConfig(input: {
     transport: input.transport ?? 'websocket',
     websocketUrl:
       (input.transport ?? 'websocket') === 'stdio' ? undefined : input.websocketUrl?.trim() || 'ws://127.0.0.1:4000',
+    ...(input.qwenExecutable?.trim() ? { qwenExecutable: input.qwenExecutable.trim() } : {}),
+    ...(input.opencodeHostname?.trim() ? { opencodeHostname: input.opencodeHostname.trim() } : {}),
+    ...(typeof input.opencodePort === 'number' ? { opencodePort: input.opencodePort } : {}),
+    ...(input.opencodeCommand?.trim() ? { opencodeCommand: input.opencodeCommand.trim() } : {}),
+    ...(Array.isArray(input.opencodeExtraArgs) ? { opencodeExtraArgs: input.opencodeExtraArgs } : {}),
+    ...(input.opencodeUsername?.trim() ? { opencodeUsername: input.opencodeUsername.trim() } : {}),
+    ...(input.opencodePassword?.trim() ? { opencodePassword: input.opencodePassword.trim() } : {}),
   };
   return createProjectConfigEntry(entry, input.cwd?.trim() || undefined);
 }
