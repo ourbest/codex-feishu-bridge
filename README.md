@@ -2,6 +2,8 @@
 
 Bridge service connecting Codex project instances to Feishu/Lark chat sessions. Send messages to a chat, and the bound Codex project responds.
 
+`codex-bridge` connects one Feishu/Lark chat session to one Codex project instance at a time. It supports project auto-discovery, lazy Codex connection startup, and switching between multiple providers per project.
+
 ## Prerequisites
 
 - **Node.js 24**
@@ -47,9 +49,11 @@ Edit `projects.json` with your project paths:
 }
 ```
 
-### OpenCode (opencode serve) 项目示例
+If `providers` is omitted or set to `[]`, the bridge uses the default provider list: `codex`, `cc`, and `qwen`.
 
-如果你想把 Feishu 会话绑定到 **OpenCode**（每个 repo 启一个 `opencode serve`），可以配置：
+### OpenCode projects
+
+If you want to bind a Feishu chat to **OpenCode** and run one `opencode serve` per repo, configure:
 
 ```json
 {
@@ -63,8 +67,6 @@ Edit `projects.json` with your project paths:
   ]
 }
 ```
-
-If `providers` is omitted or set to `[]`, the bridge uses the default provider list: `codex`, `cc`, and `qwen`.
 
 ### 3. Configure Feishu (optional)
 
@@ -94,7 +96,7 @@ The bridge listens on `http://127.0.0.1:3000` and stores bindings in `./data/bri
 | `cwd` | Yes | Working directory for the project |
 | `providers` | No | Provider list; omit or set `[]` to use the default `codex` / `cc` / `qwen` list |
 | `providers[].provider` | Yes | `codex`, `cc`, or `qwen` |
-| `providers[].transport` | No | `stdio` or `websocket` (defaults to `stdio`) |
+| `providers[].transport` | No | `stdio` or `websocket` (defaults to `stdio`; Codex defaults to `stdio`) |
 | `providers[].port` | No | WebSocket port; if omitted, the bridge picks one automatically |
 | `opencodeHostname` | No | OpenCode server hostname (default `127.0.0.1`) |
 | `opencodePort` | No | OpenCode server port (recommended to set per repo) |
@@ -102,6 +104,16 @@ The bridge listens on `http://127.0.0.1:3000` and stores bindings in `./data/bri
 | `opencodeExtraArgs` | No | Extra args for `opencode serve` (array of strings) |
 | `opencodeUsername` | No | HTTP basic auth username (optional) |
 | `opencodePassword` | No | HTTP basic auth password (optional) |
+
+## Provider Behavior
+
+- The default provider order is `codex`, `cc`, then `qwen`
+- `//providers` shows the providers available for the currently bound project
+- `//provider <name>` switches the active provider for the current project
+- Switching providers does not automatically stop inactive providers
+- If an inactive provider is already running, the bridge reuses it when you switch back
+- If an inactive provider has never started, the bridge does not start it proactively
+- `websocket` providers can omit `port`; the bridge will choose an available port automatically
 
 ## Bridge Commands
 
@@ -237,7 +249,6 @@ For single-project console mode:
 ## Notes
 
 - Each chat can only be bound to **one** project at a time
-- Each project can be bound to **multiple** chats
 - Codex connections are established **lazily** when a chat first binds to a project
 - Connections are released when **all** bound chats are unbound
 - Internal plan documents are excluded from git (see `docs/` in `.gitignore`)
