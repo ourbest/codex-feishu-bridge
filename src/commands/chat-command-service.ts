@@ -1,7 +1,7 @@
 import type { BindingService } from '../core/binding/binding-service.ts';
 import type { ProjectState } from '../runtime/project-registry.ts';
 import type { ApprovalService } from '../runtime/approval-service.ts';
-import type { ProjectProviderConfig, ProjectProviderName } from '../runtime/provider-registry.ts';
+import type { ProviderDescriptor, ProviderState } from '../runtime/provider-registry.ts';
 import type { Thread } from '../runtime/thread-manager.ts';
 
 export interface ChatCommandInput {
@@ -31,13 +31,13 @@ export interface ProjectSummary {
   cwd?: string | null;
   source?: string | null;
   activeProvider?: string | null;
-  providers?: ProjectProviderConfig[];
+  providers?: ProviderDescriptor[];
   configured?: boolean;
   active?: boolean;
   removed?: boolean;
 }
 
-export interface ProjectProviderSummary extends ProjectProviderConfig {
+export interface ProjectProviderSummary extends ProviderDescriptor {
   started?: boolean;
   active?: boolean;
 }
@@ -46,11 +46,11 @@ export interface ChatCommandServiceDependencies {
   bindingService: BindingService;
   projectRegistry: {
     describeProject(projectInstanceId: string): Promise<ProjectState>;
-    getProjectConfig?(projectInstanceId: string): { cwd?: string | null; model?: string | null; providers?: ProjectProviderConfig[] | null; activeProvider?: ProjectProviderName | null } | null;
+    getProjectConfig?(projectInstanceId: string): { cwd?: string | null; model?: string | null; providers?: ProviderDescriptor[] | null; activeProvider?: string | null } | null;
     listProjects?(): Promise<ProjectSummary[]>;
-    listProjectProviders?(projectInstanceId: string): Promise<ProjectProviderSummary[]>;
-    getActiveProvider?(projectInstanceId: string): Promise<ProjectProviderName | null>;
-    setActiveProvider?(projectInstanceId: string, provider: ProjectProviderName): Promise<void> | void;
+    listProjectProviders?(projectInstanceId: string): Promise<Array<ProjectProviderSummary | ProviderState>>;
+    getActiveProvider?(projectInstanceId: string): Promise<string | null>;
+    setActiveProvider?(projectInstanceId: string, provider: string): Promise<void> | void;
     updateProjectConfig?(projectInstanceId: string, input: { model?: string | null }): Promise<{ model?: string | null } | null> | { model?: string | null } | null;
     startThread?(projectInstanceId: string, options?: { cwd?: string; force?: boolean }): Promise<string>;
     getLastThread?(projectInstanceId: string, sessionId: string): Promise<string | null>;
@@ -114,7 +114,7 @@ function buildHelpLines(): string[] {
     '  //list              - show current binding',
     '  //projects          - list all projects',
     '  //providers         - list providers for the bound project',
-    '  //provider <name>   - switch the active provider',
+    '  //provider <id>     - switch the active provider',
     '  //new               - start a new codex thread for this chat',
     '  //status            - show bridge and codex state',
     '  //read <path>       - read a project file as a card',
@@ -254,10 +254,11 @@ function buildUnknownCommandLines(input: string): string[] {
 
 function formatProviderSummary(provider: ProjectProviderSummary, activeProvider?: string | null): string {
   const parts = [
-    `- ${provider.provider}`,
+    `- ${provider.id}`,
+    `kind=${provider.kind}`,
     provider.transport ? `transport=${provider.transport}` : null,
     provider.port !== undefined ? `port=${provider.port}` : null,
-    provider.active === true || activeProvider === provider.provider ? 'active' : null,
+    provider.active === true || activeProvider === provider.id ? 'active' : null,
     provider.started === true ? 'running' : 'stopped',
   ].filter((part): part is string => part !== null);
 
@@ -287,7 +288,7 @@ async function buildProjectsLines(dependencies: ChatCommandServiceDependencies):
       lines.push(`  - active provider: ${project.activeProvider}`);
     }
     if (Array.isArray(project.providers) && project.providers.length > 0) {
-      lines.push(`  - providers: ${project.providers.map((entry) => entry.provider).join(', ')}`);
+      lines.push(`  - providers: ${project.providers.map((entry) => entry.id).join(', ')}`);
     }
     if (project.active === true || project.configured === true || project.removed === true) {
       lines.push(`  - configured: ${yesNo(project.configured === true)}`);
@@ -318,7 +319,7 @@ async function buildProvidersLines(
     : Array.isArray(projectConfig?.providers)
       ? projectConfig.providers.map((entry) => ({
           ...entry,
-          active: activeProvider === entry.provider,
+          active: activeProvider === entry.id,
         }))
       : [];
 
@@ -344,9 +345,9 @@ async function switchActiveProviderLines(
     return formatNotBoundMessage();
   }
 
-  const normalizedProvider = providerName.trim().toLowerCase();
-  if (normalizedProvider !== 'codex' && normalizedProvider !== 'cc' && normalizedProvider !== 'qwen' && normalizedProvider !== 'gemini') {
-    return ['Usage: //provider <codex|cc|qwen|gemini>'];
+  const normalizedProvider = providerName.trim();
+  if (normalizedProvider === '') {
+    return ['Usage: //provider <id>'];
   }
 
   if (dependencies.projectRegistry.setActiveProvider === undefined) {

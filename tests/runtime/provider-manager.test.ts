@@ -15,10 +15,10 @@ test('defaults to codex, cc, qwen, and gemini and selects the first provider', (
   });
 
   assert.deepEqual(manager.listProviders(), [
-    { provider: 'codex', transport: 'stdio', active: true, started: false },
-    { provider: 'cc', transport: 'stdio', active: false, started: false },
-    { provider: 'qwen', transport: 'stdio', active: false, started: false },
-    { provider: 'gemini', transport: 'stdio', active: false, started: false },
+    { id: 'codex', kind: 'codex', transport: 'stdio', active: true, started: false },
+    { id: 'cc', kind: 'cc', transport: 'stdio', active: false, started: false },
+    { id: 'qwen', kind: 'qwen', transport: 'stdio', active: false, started: false },
+    { id: 'gemini', kind: 'gemini', transport: 'stdio', active: false, started: false },
   ]);
   assert.equal(manager.getActiveProviderName(), 'codex');
 });
@@ -29,9 +29,9 @@ test('switches active providers without eagerly starting inactive providers', as
     projectInstanceId: 'project-a',
     cwd: '/repo/project-a',
     createClient: async ({ provider }) => {
-      createCalls.push(provider.provider);
+      createCalls.push(provider.id);
       return {
-        generateReply: async () => `${provider.provider}:reply`,
+        generateReply: async () => `${provider.id}:reply`,
         stop: async () => {},
       };
     },
@@ -52,9 +52,9 @@ test('reuses started provider clients when switching back', async () => {
     projectInstanceId: 'project-a',
     cwd: '/repo/project-a',
     createClient: async ({ provider }) => {
-      createCalls.push(provider.provider);
+      createCalls.push(provider.id);
       return {
-        generateReply: async () => `${provider.provider}:reply`,
+        generateReply: async () => `${provider.id}:reply`,
         stop: async () => {},
       };
     },
@@ -79,33 +79,33 @@ test('allocates a websocket port lazily and persists active provider state', asy
     projectInstanceId: 'project-a',
     cwd: '/repo/project-a',
     providers: [
-      { provider: 'codex', transport: 'websocket' },
-      { provider: 'cc', transport: 'stdio' },
+      { id: 'codex-web', kind: 'codex', transport: 'websocket' },
+      { id: 'cc-stdio', kind: 'cc', transport: 'stdio' },
     ],
     stateStore,
     allocatePort: async () => nextPort++,
     createClient: async ({ provider }) => {
-      createConfigs.push({ provider: provider.provider, port: provider.port });
+      createConfigs.push({ provider: provider.id, port: provider.port });
       return {
-        generateReply: async () => `${provider.provider}:reply`,
+        generateReply: async () => `${provider.id}:reply`,
         stop: async () => {},
       };
     },
   });
 
-  manager.switchActiveProvider('codex');
+  manager.switchActiveProvider('codex-web');
   assert.deepEqual(stateStore.getProjectState('project-a'), {
     projectInstanceId: 'project-a',
-    activeProvider: 'codex',
+    activeProvider: 'codex-web',
   });
 
   const client = await manager.ensureActiveProviderClient();
-  assert.equal(await client.generateReply({ text: 'hello' }), 'codex:reply');
-  assert.deepEqual(createConfigs, [{ provider: 'codex', port: 4311 }]);
+  assert.equal(await client.generateReply({ text: 'hello' }), 'codex-web:reply');
+  assert.deepEqual(createConfigs, [{ provider: 'codex-web', port: 4311 }]);
   assert.deepEqual(stateStore.getProjectState('project-a'), {
     projectInstanceId: 'project-a',
-    activeProvider: 'codex',
-    websocketPorts: { codex: 4311 },
-    startedProviders: ['codex'],
+    activeProvider: 'codex-web',
+    websocketPorts: { 'codex-web': 4311 },
+    startedProviders: ['codex-web'],
   });
 });

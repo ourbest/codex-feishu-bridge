@@ -483,7 +483,7 @@ test('rejects bare codex commands without the // prefix', async () => {
     '  //list              - show current binding',
     '  //projects          - list all projects',
     '  //providers         - list providers for the bound project',
-    '  //provider <name>   - switch the active provider',
+    '  //provider <id>     - switch the active provider',
     '  //new               - start a new codex thread for this chat',
     '  //status            - show bridge and codex state',
     '  //read <path>       - read a project file as a card',
@@ -545,8 +545,8 @@ test('lists projects with //projects', async () => {
             source: 'config',
             activeProvider: 'codex',
             providers: [
-              { provider: 'codex', transport: 'stdio' },
-              { provider: 'qwen', transport: 'stdio' },
+              { id: 'codex', kind: 'codex', transport: 'stdio' },
+              { id: 'qwen', kind: 'qwen', transport: 'stdio' },
             ],
             configured: true,
             active: true,
@@ -558,9 +558,9 @@ test('lists projects with //projects', async () => {
             source: 'root',
             activeProvider: 'qwen',
             providers: [
-              { provider: 'codex', transport: 'stdio' },
-              { provider: 'cc', transport: 'stdio' },
-              { provider: 'qwen', transport: 'stdio' },
+              { id: 'codex', kind: 'codex', transport: 'stdio' },
+              { id: 'cc', kind: 'cc', transport: 'stdio' },
+              { id: 'qwen', kind: 'qwen', transport: 'stdio' },
             ],
             configured: true,
             active: false,
@@ -622,26 +622,26 @@ test('lists and switches providers for the bound project', async () => {
               cwd: '/repo/project-a',
               activeProvider: 'codex',
               providers: [
-                { provider: 'codex', transport: 'stdio' },
-                { provider: 'cc', transport: 'stdio' },
-                { provider: 'qwen', transport: 'stdio' },
+                { id: 'codex', kind: 'codex', transport: 'stdio' },
+                { id: 'cc', kind: 'cc', transport: 'stdio' },
+                { id: 'qwen', kind: 'qwen', transport: 'stdio' },
               ],
             }
           : null;
       },
       async listProjectProviders(projectInstanceId: string) {
         return projectInstanceId === 'project-a'
-          ? [
-              { provider: 'codex', transport: 'stdio', started: true, active: true },
-              { provider: 'cc', transport: 'stdio', started: false, active: false },
-              { provider: 'qwen', transport: 'stdio', started: true, active: false },
+            ? [
+              { id: 'codex', kind: 'codex', transport: 'stdio', started: true, active: true },
+              { id: 'cc', kind: 'cc', transport: 'stdio', started: false, active: false },
+              { id: 'qwen', kind: 'qwen', transport: 'stdio', started: true, active: false },
             ]
           : [];
       },
       async getActiveProvider(projectInstanceId: string) {
         return projectInstanceId === 'project-a' ? 'codex' : null;
       },
-      async setActiveProvider(projectInstanceId: string, provider: 'codex' | 'cc' | 'qwen') {
+      async setActiveProvider(projectInstanceId: string, provider: string) {
         setActiveCalls.push({ projectInstanceId, provider });
       },
     },
@@ -661,9 +661,9 @@ test('lists and switches providers for the bound project', async () => {
 
   assert.deepEqual(providersLines, [
     '## [lark-agent-bridge] providers for project-a',
-    '- codex | transport=stdio | active | running',
-    '- cc | transport=stdio | stopped',
-    '- qwen | transport=stdio | running',
+    '- codex | kind=codex | transport=stdio | active | running',
+    '- cc | kind=cc | transport=stdio | stopped',
+    '- qwen | kind=qwen | transport=stdio | running',
   ]);
   assert.deepEqual(switchLines, ['[lark-agent-bridge] active provider for project-a set to qwen']);
   assert.deepEqual(setActiveCalls, [
@@ -1395,7 +1395,7 @@ test('rejects unsupported codex commands before they reach the executor', async 
     '  //list              - show current binding',
     '  //projects          - list all projects',
     '  //providers         - list providers for the bound project',
-    '  //provider <name>   - switch the active provider',
+    '  //provider <id>     - switch the active provider',
     '  //new               - start a new codex thread for this chat',
     '  //status            - show bridge and codex state',
     '  //read <path>       - read a project file as a card',
@@ -1456,7 +1456,7 @@ test('returns an error for unknown // commands instead of falling through', asyn
     '  //list              - show current binding',
     '  //projects          - list all projects',
     '  //providers         - list providers for the bound project',
-    '  //provider <name>   - switch the active provider',
+    '  //provider <id>     - switch the active provider',
     '  //new               - start a new codex thread for this chat',
     '  //status            - show bridge and codex state',
     '  //read <path>       - read a project file as a card',

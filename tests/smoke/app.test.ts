@@ -481,10 +481,10 @@ test('uses the live provider list for //providers and shows active provider as r
       async getProjectProviders(projectInstanceId) {
         return projectInstanceId === 'project-a'
           ? [
-              { provider: 'codex', transport: 'stdio', active: true, started: true },
-              { provider: 'cc', transport: 'stdio', active: false, started: false },
-              { provider: 'qwen', transport: 'stdio', active: false, started: false },
-              { provider: 'gemini', transport: 'stdio', active: false, started: false },
+              { id: 'codex', kind: 'codex', transport: 'stdio', active: true, started: true },
+              { id: 'cc', kind: 'cc', transport: 'stdio', active: false, started: false },
+              { id: 'qwen', kind: 'qwen', transport: 'stdio', active: false, started: false },
+              { id: 'gemini', kind: 'gemini', transport: 'stdio', active: false, started: false },
             ]
           : [];
       },
@@ -512,7 +512,7 @@ test('uses the live provider list for //providers and shows active provider as r
   };
   const footer = card.body?.elements?.find((element) => element.tag === 'markdown' && typeof element.content === 'string' && element.content.includes('codex'));
   assert.ok(footer);
-  assert.match(JSON.stringify(footer), /codex \| transport=stdio \| active \| running/);
+  assert.match(JSON.stringify(footer), /codex \| kind=codex \| transport=stdio \| active \| running/);
   await app.stop();
 });
 
@@ -1505,7 +1505,7 @@ test('renders //help as an interactive card for easier reading', async () => {
   assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('//bind')));
   assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('//projects')));
   assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('//providers')));
-  assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('//provider <name>')));
+  assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('//provider <id>')));
   assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('//new')));
   assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('//abort')));
   assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('//approve-auto <minutes>')));
@@ -1579,7 +1579,7 @@ test('renders unbound guidance as an interactive card', async () => {
   assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('//bind <projectId>')));
   assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('//projects')));
   assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('//providers')));
-  assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('//provider <name>')));
+  assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('//provider <id>')));
 
   await app.stop();
 });
