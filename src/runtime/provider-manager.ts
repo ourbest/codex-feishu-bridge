@@ -236,11 +236,20 @@ export class ProviderManager {
         return await client.pauseThread(id);
       },
       abortCurrentTask: async () => {
-        const client = this.getStartedClient(this.activeProvider);
-        if (client?.abortCurrentTask === undefined) {
-          return false;
+        let aborted = false;
+        for (const provider of this.entries.keys()) {
+          const client = this.getStartedClient(provider);
+          if (client?.abortCurrentTask === undefined) {
+            continue;
+          }
+
+          try {
+            aborted = (await client.abortCurrentTask()) || aborted;
+          } catch {
+            // Best-effort cancel: keep trying the remaining started clients.
+          }
         }
-        return await client.abortCurrentTask();
+        return aborted;
       },
       stop: async () => {
         await this.stop();

@@ -158,9 +158,9 @@ test('reuses a started provider when switching back to it', async () => {
   assert.deepEqual(stopCalls, []);
 });
 
-test('aborts the active reply for a project', async () => {
+test('aborts the active reply even after switching active providers', async () => {
   let resolveReply: ((value: string) => void) | null = null;
-  let abortCalls = 0;
+  const abortCalls = new Map<string, number>();
   const registry = createProjectRegistry({
     getProjectConfig: (id) =>
       id === 'project-a'
@@ -168,16 +168,21 @@ test('aborts the active reply for a project', async () => {
             projectInstanceId: 'project-a',
             websocketUrl: 'ws://localhost:4000',
             cwd: '/repo/project-a',
+            providers: [
+              { provider: 'codex', transport: 'stdio' },
+              { provider: 'qwen', transport: 'stdio' },
+            ],
           }
         : null,
-    createClient: () => ({
+    createClient: (_projectId, _config, provider) => ({
       generateReply: async () =>
         await new Promise<string>((resolve) => {
           resolveReply = resolve;
         }),
       abortCurrentTask: async () => {
-        abortCalls += 1;
-        return true;
+        const key = provider?.provider ?? 'codex';
+        abortCalls.set(key, (abortCalls.get(key) ?? 0) + 1);
+        return key === 'codex';
       },
       stop: async () => {},
     }),
@@ -193,9 +198,11 @@ test('aborts the active reply for a project', async () => {
   });
 
   await new Promise((resolve) => setImmediate(resolve));
+  await registry.setActiveProvider('project-a', 'qwen');
   const aborted = await (registry as unknown as { abortCurrentTask(projectId: string): Promise<boolean> }).abortCurrentTask('project-a');
   assert.equal(aborted, true);
-  assert.equal(abortCalls, 1);
+  assert.equal(abortCalls.get('codex'), 1);
+  assert.equal(abortCalls.get('qwen') ?? 0, 0);
 
   resolveReply?.('late reply');
 
