@@ -69,3 +69,31 @@ test('keeps outbound replies targeted at the rebound session', async () => {
     text: 'reply:hello',
   });
 });
+
+test('enriches the bound session name when routing an inbound message', async () => {
+  const store = new InMemoryBindingStore();
+  const bindingService = new BindingService(store, {
+    async getChatName(chatId: string) {
+      return chatId === 'session-a' ? 'Dev Team' : null;
+    },
+  } as any);
+  const router = new BridgeRouter(bindingService);
+
+  store.setBinding('project-a', 'session-a');
+  router.registerProjectHandler('project-a', async ({ message }) => ({
+    text: `reply:${message.text}`,
+  }));
+
+  await router.routeInboundMessage({
+    source: 'lark',
+    sessionId: 'session-a',
+    messageId: 'message-1',
+    text: 'hello',
+    senderId: 'user-a',
+    timestamp: '2026-03-29T00:00:00.000Z',
+  });
+
+  await Promise.resolve();
+
+  assert.equal((await bindingService.getAllBindings())[0]?.sessionName, 'Dev Team');
+});

@@ -270,14 +270,23 @@ async function buildProjectsLines(dependencies: ChatCommandServiceDependencies):
     return ['## [lark-agent-bridge] projects', '- project listing is not configured'];
   }
 
-  const projects = await dependencies.projectRegistry.listProjects();
+  const [projects, bindings] = await Promise.all([
+    dependencies.projectRegistry.listProjects(),
+    dependencies.bindingService.getAllBindings(),
+  ]);
   if (projects.length === 0) {
     return ['## [lark-agent-bridge] projects', '- no projects configured'];
   }
 
+  const bindingByProject = new Map(bindings.map((binding) => [binding.projectInstanceId, binding] as const));
   const lines = ['## [lark-agent-bridge] projects'];
   for (const project of projects) {
+    const binding = bindingByProject.get(project.projectInstanceId);
     lines.push(`- ${project.projectInstanceId}`);
+    if (binding !== undefined) {
+      lines.push(`  - session: ${binding.sessionName ?? binding.sessionId}`);
+      lines.push(`  - session id: ${binding.sessionId}`);
+    }
     if (project.cwd !== undefined && project.cwd !== null) {
       lines.push(`  - cwd: ${project.cwd}`);
     }
@@ -363,12 +372,27 @@ async function switchActiveProviderLines(
   }
 }
 
-function buildCodexSupportNotConfiguredLines(projectId: string, method: string): string[] {
+function buildCodexSupportNotConfiguredLines(input: {
+  projectId: string;
+  method: string;
+  activeProvider?: string | null;
+}): string[] {
   return [
     '[lark-agent-bridge] codex command support is not configured',
-    `  projectId: ${projectId}`,
-    `  command: ${method}`,
-  ];
+    `  projectId: ${input.projectId}`,
+    input.activeProvider !== undefined && input.activeProvider !== null ? `  activeProvider: ${input.activeProvider}` : null,
+    `  command: ${input.method}`,
+  ].filter((line): line is string => line !== null);
+}
+
+function isUnsupportedStructuredCodexCommandError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes('does not support structured commands') || message.includes('does not support structured Codex commands');
+}
+
+function buildCodexCommandFailureLines(method: string, error: unknown): string[] {
+  const message = error instanceof Error ? error.message : String(error);
+  return [`[lark-agent-bridge] codex command failed: ${method}`, `  reason: ${message}`];
 }
 
 async function startNewThreadLines(
@@ -376,7 +400,14 @@ async function startNewThreadLines(
   projectId: string,
 ): Promise<string[]> {
   if (dependencies.projectRegistry.startThread === undefined) {
-    return buildCodexSupportNotConfiguredLines(projectId, '//new');
+    const activeProvider = dependencies.projectRegistry.getActiveProvider === undefined
+      ? null
+      : await dependencies.projectRegistry.getActiveProvider(projectId);
+    return buildCodexSupportNotConfiguredLines({
+      projectId,
+      method: '//new',
+      activeProvider,
+    });
   }
 
   const projectConfig = dependencies.projectRegistry.getProjectConfig?.(projectId);
@@ -862,7 +893,14 @@ export function createChatCommandService(dependencies: ChatCommandServiceDepende
         dependencies.executeStructuredCodexCommand === undefined &&
         dependencies.executeCodexCommand === undefined
       ) {
-        return buildCodexSupportNotConfiguredLines(projectId, resolved.method);
+        const activeProvider = dependencies.projectRegistry.getActiveProvider === undefined
+          ? null
+          : await dependencies.projectRegistry.getActiveProvider(projectId);
+        return buildCodexSupportNotConfiguredLines({
+          projectId,
+          method: resolved.method,
+          activeProvider,
+        });
       }
 
       const params =
@@ -889,23 +927,42 @@ export function createChatCommandService(dependencies: ChatCommandServiceDepende
       }
 
       if (dependencies.executeStructuredCodexCommand !== undefined) {
-        return await dependencies.executeStructuredCodexCommand({
-          sessionId: input.sessionId,
-          senderId: input.senderId,
-          projectInstanceId: projectId,
-          method: resolved.method,
-          params,
-        });
+        try {
+          return await dependencies.executeStructuredCodexCommand({
+            sessionId: input.sessionId,
+            senderId: input.senderId,
+            projectInstanceId: projectId,
+            method: resolved.method,
+            params,
+          });
+        } catch (error) {
+          if (isUnsupportedStructuredCodexCommandError(error)) {
+            const activeProvider = dependencies.projectRegistry.getActiveProvider === undefined
+              ? null
+              : await dependencies.projectRegistry.getActiveProvider(projectId);
+            return buildCodexSupportNotConfiguredLines({
+              projectId,
+              method: resolved.method,
+              activeProvider,
+            });
+          }
+
+          return buildCodexCommandFailureLines(resolved.method, error);
+        }
       }
 
       if (dependencies.executeCodexCommand !== undefined) {
-        return await dependencies.executeCodexCommand({
-          sessionId: input.sessionId,
-          senderId: input.senderId,
-          projectInstanceId: projectId,
-          command: resolved.method,
-          args: resolved.legacyArgs,
-        });
+        try {
+          return await dependencies.executeCodexCommand({
+            sessionId: input.sessionId,
+            senderId: input.senderId,
+            projectInstanceId: projectId,
+            command: resolved.method,
+            args: resolved.legacyArgs,
+          });
+        } catch (error) {
+          return buildCodexCommandFailureLines(resolved.method, error);
+        }
       }
     },
   };

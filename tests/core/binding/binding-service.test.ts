@@ -66,6 +66,36 @@ test('getAllBindings returns empty array when no bindings exist', async () => {
   assert.deepEqual(bindings, []);
 });
 
+test('enrichSessionName stores the fetched name for a binding', async () => {
+  const store = new InMemoryBindingStore();
+  const service = new BindingService(store, {
+    async getChatName(chatId: string) {
+      return chatId === 'session-a' ? 'Dev Team' : null;
+    },
+  } as any);
+
+  await service.bindProjectToSession('project-a', 'session-a');
+  await service.enrichSessionName('session-a');
+
+  const bindings = await service.getAllBindings();
+  assert.equal(bindings[0]?.sessionName, 'Dev Team');
+});
+
+test('bindProjectToSession triggers session name enrichment when available', async () => {
+  const store = new InMemoryBindingStore();
+  let lookedUpChatId: string | null = null;
+  const service = new BindingService(store, {
+    async getChatName(chatId: string) {
+      lookedUpChatId = chatId;
+      return 'Dev Team';
+    },
+  } as any);
+
+  await service.bindProjectToSession('project-a', 'session-a');
+
+  assert.equal(lookedUpChatId, 'session-a');
+});
+
 test('observer receives bound event when project is bound', async () => {
   const service = new BindingService(new InMemoryBindingStore());
   const events: any[] = [];

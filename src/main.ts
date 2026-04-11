@@ -29,6 +29,7 @@ import { createFeishuWebSocketTransport } from './adapters/lark/feishu-websocket
 import { buildStartupNotificationCard } from './adapters/lark/cards.ts';
 import { JsonBindingStore } from './storage/json-binding-store.ts';
 import { createApprovalService } from './runtime/approval-service.ts';
+import { LarkChatInfoService } from './services/lark-chat-info-service.ts';
 import { defaultHttpInstance, LoggerLevel, WSClient, EventDispatcher, Client } from '@larksuiteoapi/node-sdk';
 import { createFileDownloadHandler } from './adapters/lark/file-downloader.ts';
 
@@ -259,7 +260,7 @@ export async function run(): Promise<void> {
   let app: ReturnType<typeof createBridgeApp> | null = null;
   let restartInFlight = false;
 
-  const { transport, sendToOpenId, sendCardToOpenId, downloadFile } = feishuRuntime !== null && feishuRuntime.wsEnabled
+  const transportBundle = feishuRuntime !== null && feishuRuntime.wsEnabled
     ? await createFeishuWebSocketTransportFromRuntime(feishuRuntime)
     : { transport: createLocalDevLarkTransport({
         onSend(message) {
@@ -268,12 +269,15 @@ export async function run(): Promise<void> {
         onReact(message) {
           console.log(`[lark-agent-bridge] reaction -> ${message.targetMessageId}: ${message.emojiType}`);
         },
-      }), sendToOpenId: null, sendCardToOpenId: null, downloadFile: null };
+      }), sendToOpenId: null, sendCardToOpenId: null, downloadFile: null, restClient: null };
+  const { transport, sendToOpenId, sendCardToOpenId, downloadFile, restClient } = transportBundle;
+  const larkChatInfoService = restClient === null ? undefined : new LarkChatInfoService(restClient);
 
   app = createBridgeApp({
     config,
     larkTransport: transport,
     bindingStore: bridgeStore,
+    larkChatInfoService,
     approvalService,
     downloadFile: downloadFile ?? undefined,
     onRestartRequested: async ({ sessionId, senderId }) => {
@@ -1005,7 +1009,7 @@ async function createFeishuWebSocketTransportFromRuntime(feishuRuntime: { appId:
     });
   }
 
-  return { transport, sendToOpenId, sendCardToOpenId, downloadFile: downloadHandler };
+  return { transport, sendToOpenId, sendCardToOpenId, downloadFile: downloadHandler, restClient };
 }
 
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {

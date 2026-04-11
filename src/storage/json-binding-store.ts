@@ -45,6 +45,7 @@ function readSnapshot(filePath: string): BindingSnapshot {
       .map((entry) => ({
         projectInstanceId: entry.projectInstanceId,
         sessionId: entry.sessionId,
+        sessionName: typeof entry.sessionName === 'string' ? entry.sessionName : undefined,
       })),
     threadMemories: threadMemories
       .filter((entry): entry is ThreadMemoryRecord => {
@@ -172,7 +173,15 @@ export class JsonBindingStore implements BindingStore, ThreadMemoryStore, Bridge
     return this.snapshot.bindings.map((entry) => ({
       projectInstanceId: entry.projectInstanceId,
       sessionId: entry.sessionId,
+      ...(entry.sessionName !== undefined ? { sessionName: entry.sessionName } : {}),
     }));
+  }
+
+  updateSessionName(sessionId: string, name: string): void {
+    this.snapshot.bindings = this.snapshot.bindings.map((entry) =>
+      entry.sessionId === sessionId ? { ...entry, sessionName: name } : entry,
+    );
+    this.persist();
   }
 
   getLastThreadId(projectInstanceId: string, sessionId: string): string | null {

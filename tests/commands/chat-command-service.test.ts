@@ -127,6 +127,7 @@ test('resumes a thread by explicit id for the bound chat', async () => {
 
   await bindingService.bindProjectToSession('project-a', 'chat-a');
   await registry.onBindingChanged({ type: 'bound', projectId: 'project-a', sessionId: 'chat-a' });
+  await registry.setActiveProvider('project-a', 'cc');
 
   const service = createChatCommandService({
     bindingService,
@@ -172,6 +173,7 @@ test('resumes the last thread for the bound chat', async () => {
 
   await bindingService.bindProjectToSession('project-a', 'chat-a');
   await registry.onBindingChanged({ type: 'bound', projectId: 'project-a', sessionId: 'chat-a' });
+  await registry.setActiveProvider('project-a', 'cc');
 
   const service = createChatCommandService({
     bindingService,
@@ -353,6 +355,7 @@ test('returns bridge and codex state for //status on a bound chat', async () => 
 
   await bindingService.bindProjectToSession('project-a', 'chat-a');
   await registry.onBindingChanged({ type: 'bound', projectId: 'project-a', sessionId: 'chat-a' });
+  await registry.setActiveProvider('project-a', 'cc');
 
   const service = createChatCommandService({
     bindingService,
@@ -413,6 +416,7 @@ test('returns the current binding for //list', async () => {
 
   await bindingService.bindProjectToSession('project-a', 'chat-a');
   await registry.onBindingChanged({ type: 'bound', projectId: 'project-a', sessionId: 'chat-a' });
+  await registry.setActiveProvider('project-a', 'cc');
 
   const service = createChatCommandService({
     bindingService,
@@ -524,7 +528,10 @@ test('rejects bare codex commands without the // prefix', async () => {
 });
 
 test('lists projects with //projects', async () => {
-  const bindingService = createBindingService();
+  const store = new InMemoryBindingStore();
+  const bindingService = new BindingService(store);
+  store.setBinding('project-a', 'chat-a');
+  store.updateSessionName('chat-a', 'Dev Team');
   const service = createChatCommandService({
     bindingService,
     projectRegistry: {
@@ -580,6 +587,8 @@ test('lists projects with //projects', async () => {
   assert.deepEqual(lines, [
     '## [lark-agent-bridge] projects',
     '- project-a',
+    '  - session: Dev Team',
+    '  - session id: chat-a',
     '  - cwd: /repo/project-a',
     '  - source: config',
     '  - active provider: codex',
@@ -757,6 +766,7 @@ test('routes prefixed codex commands through the executor when bound', async () 
 
   await bindingService.bindProjectToSession('project-a', 'chat-a');
   await registry.onBindingChanged({ type: 'bound', projectId: 'project-a', sessionId: 'chat-a' });
+  await registry.setActiveProvider('project-a', 'cc');
 
   const service = createChatCommandService({
     bindingService,
@@ -817,6 +827,7 @@ test('returns a configuration error when the prefixed codex executor is unavaila
   assert.deepEqual(lines, [
     '[lark-agent-bridge] codex command support is not configured',
     '  projectId: project-a',
+    '  activeProvider: codex',
     '  command: app/list',
   ]);
 });
@@ -874,6 +885,47 @@ test('routes a whitelisted structured codex command through the executor', async
     },
   ]);
   assert.deepEqual(lines, ['[lark-agent-bridge] codex ok']);
+});
+
+test('treats unsupported structured codex commands as a non-fatal configuration issue', async () => {
+  const bindingService = createBindingService();
+  const registry = createProjectRegistry({
+    getProjectConfig: (projectInstanceId) =>
+      projectInstanceId === 'project-a'
+        ? { projectInstanceId: 'project-a', websocketUrl: 'ws://localhost:4000' }
+        : null,
+    createClient: () => ({
+      async generateReply() {
+        return 'reply';
+      },
+      async stop() {},
+    }),
+  });
+
+  await bindingService.bindProjectToSession('project-a', 'chat-a');
+  await registry.onBindingChanged({ type: 'bound', projectId: 'project-a', sessionId: 'chat-a' });
+  await registry.setActiveProvider('project-a', 'cc');
+
+  const service = createChatCommandService({
+    bindingService,
+    projectRegistry: registry,
+    executeStructuredCodexCommand: async () => {
+      throw new Error('Project project-a does not support structured Codex commands');
+    },
+  });
+
+  const lines = await service.execute({
+    sessionId: 'chat-a',
+    senderId: 'user-a',
+    text: '//thread/list',
+  });
+
+  assert.deepEqual(lines, [
+    '[lark-agent-bridge] codex command support is not configured',
+    '  projectId: project-a',
+    '  activeProvider: cc',
+    '  command: thread/list',
+  ]);
 });
 
 test('translates session/list to the current app-server thread/list method', async () => {
@@ -1308,6 +1360,7 @@ test('does not start a thread for review when codex executor support is unavaila
   assert.deepEqual(lines, [
     '[lark-agent-bridge] codex command support is not configured',
     '  projectId: project-a',
+    '  activeProvider: codex',
     '  command: review/start',
   ]);
 });

@@ -28,6 +28,8 @@ export class BridgeRouter {
       return null;
     }
 
+    void this.bindingService.enrichSessionName(message.sessionId);
+
     const handler = this.handlers.get(projectInstanceId);
     if (handler === undefined) {
       return null;

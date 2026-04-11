@@ -7,6 +7,7 @@ import { createApiServer } from './api/server.ts';
 import { createChatCommandService } from './commands/chat-command-service.ts';
 import { BindingService } from './core/binding/binding-service.ts';
 import { BridgeRouter } from './core/router/router.ts';
+import type { LarkChatInfoService } from './services/lark-chat-info-service.ts';
 import type { BridgeConfig } from './types/index.ts';
 import { InMemoryBindingStore } from './storage/binding-store.ts';
 import type { LarkTransport } from './adapters/lark/adapter.ts';
@@ -396,6 +397,7 @@ export function createBridgeApp(options: {
   config: BridgeConfig;
   larkTransport: LarkTransport;
   bindingStore?: BindingStore;
+  larkChatInfoService?: LarkChatInfoService;
   onInboundMessage?: (message: { sessionId: string; messageId: string; senderId: string; text: string }) => void;
   consoleHandler?: MessageHandler;
   onRestartRequested?: (input: { sessionId: string; senderId: string; messageId: string; text: string }) => Promise<void>;
@@ -451,7 +453,7 @@ export function createBridgeApp(options: {
   }
 
   const bindingStore = options.bindingStore ?? new InMemoryBindingStore();
-  const bindingService = new BindingService(bindingStore);
+  const bindingService = new BindingService(bindingStore, options.larkChatInfoService);
   const router = new BridgeRouter(bindingService);
   const larkAdapter = new LarkAdapter(options.larkTransport);
   const apiServer = createApiServer({
@@ -1209,6 +1211,10 @@ export function createBridgeApp(options: {
     const state = await options.projectRegistry.describeProject(bound);
     const diagnostics = await options.projectRegistry.getProjectDiagnostics?.(bound) ?? null;
     const hasHandler = router.hasProjectHandler(bound);
+    const reconnectingReason = diagnostics?.status === 'failed' ? diagnostics.reason ?? '' : '';
+    if (reconnectingReason.includes('Reconnecting...')) {
+      return;
+    }
     const unavailableMessage = formatUnavailableProjectMessage({
       projectId: bound,
       state,

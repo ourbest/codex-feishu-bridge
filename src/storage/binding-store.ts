@@ -86,11 +86,14 @@ export class InMemoryBindingStore implements BindingStore {
 
   getAllBindings(): BindingRecord[] {
     return Array.from(this.projectToSession.entries()).map(
-      ([projectInstanceId, sessionId]) => ({
-        projectInstanceId,
-        sessionId,
-        sessionName: this.sessionNames.get(sessionId),
-      }),
+      ([projectInstanceId, sessionId]) => {
+        const sessionName = this.sessionNames.get(sessionId);
+        return {
+          projectInstanceId,
+          sessionId,
+          ...(sessionName !== undefined ? { sessionName } : {}),
+        };
+      },
     );
   }
 
