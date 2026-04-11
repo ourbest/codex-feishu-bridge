@@ -64,7 +64,7 @@ const HELP_CARD_BRIDGE_COMMANDS = [
   { command: '//list', description: 'Show the current binding.' },
   { command: '//projects', description: 'List all known projects.' },
   { command: '//providers', description: 'List providers for the bound project.' },
-  { command: '//provider <name>', description: 'Switch the active provider.' },
+  { command: '//provider <id>', description: 'Switch the active provider.' },
   { command: '//new', description: 'Start a fresh Codex thread for this chat.' },
   { command: '//status', description: 'Show bridge and Codex session state.' },
   { command: '//abort', description: 'Abort the current task.' },
@@ -409,12 +409,12 @@ export function createBridgeApp(options: {
       projectInstanceId: string;
       cwd?: string | null;
       activeProvider?: string | null;
-      providers?: Array<{ provider: string; transport: string; port?: number }>;
+      providers?: Array<{ id: string; kind: string; transport: string; port?: number }>;
       configured?: boolean;
       active?: boolean;
       removed?: boolean;
     }>>;
-    getProjectProviders?(projectInstanceId: string): Promise<Array<{ provider: string; transport: string; active: boolean; started: boolean; port?: number }>>;
+    getProjectProviders?(projectInstanceId: string): Promise<Array<{ id: string; kind: string; transport: string; active: boolean; started: boolean; port?: number }>>;
     getActiveProvider?(projectInstanceId: string): Promise<string | null>;
     setActiveProvider?(projectInstanceId: string, provider: string): Promise<void>;
     updateProjectConfig?(projectInstanceId: string, input: { model?: string | null }): Promise<ProjectConfig | null> | ProjectConfig | null;
@@ -1171,7 +1171,7 @@ export function createBridgeApp(options: {
         : '';
 
       const fallbackText =
-        `[lark-agent-bridge] unbound session. chatId: ${message.sessionId}, openId: ${message.senderId}${attachmentNote}\n\nCommands:\n  //bind <projectId> - bind this chat to a project\n  //unbind - unbind this chat\n  //list - list all bindings\n  //projects - list all projects\n  //providers - list providers for the bound project\n  //provider <name> - switch the active provider\n  //new - start a new codex thread for this chat\n  //status - show bridge and codex state\n  //abort - abort the current task\n  //reload projects - reload projects.json\n  //help - show this help`;
+        `[lark-agent-bridge] unbound session. chatId: ${message.sessionId}, openId: ${message.senderId}${attachmentNote}\n\nCommands:\n  //bind <projectId> - bind this chat to a project\n  //unbind - unbind this chat\n  //list - list all bindings\n  //projects - list all projects\n  //providers - list providers for the bound project\n  //provider <id> - switch the active provider\n  //new - start a new codex thread for this chat\n  //status - show bridge and codex state\n  //abort - abort the current task\n  //reload projects - reload projects.json\n  //help - show this help`;
 
       if (hasAttachments) {
         // When there are attachments, use a content card that shows the attachment warning

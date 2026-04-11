@@ -1,5 +1,5 @@
 export type ProviderKind = 'codex' | 'cc' | 'qwen' | 'gemini';
-export type ProviderTransport = 'stdio' | 'websocket';
+export type ProviderTransport = 'stdio' | 'websocket' | 'ssh+stdio';
 
 export const DEFAULT_PROVIDER_ORDER: ProviderKind[] = ['codex', 'cc', 'qwen', 'gemini'];
 

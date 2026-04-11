@@ -58,10 +58,10 @@ test('exposes default providers and the initial active provider', async () => {
   });
 
   assert.deepEqual(await registry.getProjectProviders('project-a'), [
-    { provider: 'codex', transport: 'stdio', active: true, started: false },
-    { provider: 'cc', transport: 'stdio', active: false, started: false },
-    { provider: 'qwen', transport: 'stdio', active: false, started: false },
-    { provider: 'gemini', transport: 'stdio', active: false, started: false },
+    { id: 'codex', kind: 'codex', transport: 'stdio', active: true, started: false },
+    { id: 'cc', kind: 'cc', transport: 'stdio', active: false, started: false },
+    { id: 'qwen', kind: 'qwen', transport: 'stdio', active: false, started: false },
+    { id: 'gemini', kind: 'gemini', transport: 'stdio', active: false, started: false },
   ]);
   assert.equal(await registry.getActiveProvider('project-a'), 'codex');
 });
@@ -79,14 +79,14 @@ test('switches active providers without stopping already-started inactive provid
             websocketUrl: 'ws://localhost:4000',
             cwd: '/repo/project-a',
             providers: [
-              { provider: 'codex', transport: 'stdio' },
-              { provider: 'qwen', transport: 'websocket' },
+              { id: 'codex', kind: 'codex', transport: 'stdio' },
+              { id: 'qwen', kind: 'qwen', transport: 'websocket' },
             ],
           }
         : null,
     createClient: (_projectId, _config, provider) => {
-      createCalls.push({ provider: provider?.provider ?? 'codex', port: provider?.port });
-      return createProviderMockClient(provider?.provider ?? 'codex', stopCalls);
+      createCalls.push({ provider: provider?.id ?? 'codex', port: provider?.port });
+      return createProviderMockClient(provider?.id ?? 'codex', stopCalls);
     },
   });
 
@@ -123,14 +123,14 @@ test('reuses a started provider when switching back to it', async () => {
             websocketUrl: 'ws://localhost:4000',
             cwd: '/repo/project-a',
             providers: [
-              { provider: 'codex', transport: 'stdio' },
-              { provider: 'qwen', transport: 'websocket' },
+              { id: 'codex', kind: 'codex', transport: 'stdio' },
+              { id: 'qwen', kind: 'qwen', transport: 'websocket' },
             ],
           }
         : null,
     createClient: (_projectId, _config, provider) => {
-      createCalls.push({ provider: provider?.provider ?? 'codex', port: provider?.port });
-      return createProviderMockClient(provider?.provider ?? 'codex', stopCalls);
+      createCalls.push({ provider: provider?.id ?? 'codex', port: provider?.port });
+      return createProviderMockClient(provider?.id ?? 'codex', stopCalls);
     },
   });
 
@@ -169,8 +169,8 @@ test('aborts the active reply even after switching active providers', async () =
             websocketUrl: 'ws://localhost:4000',
             cwd: '/repo/project-a',
             providers: [
-              { provider: 'codex', transport: 'stdio' },
-              { provider: 'qwen', transport: 'stdio' },
+              { id: 'codex', kind: 'codex', transport: 'stdio' },
+              { id: 'qwen', kind: 'qwen', transport: 'stdio' },
             ],
           }
         : null,
@@ -180,7 +180,7 @@ test('aborts the active reply even after switching active providers', async () =
           resolveReply = resolve;
         }),
       abortCurrentTask: async () => {
-        const key = provider?.provider ?? 'codex';
+        const key = provider?.id ?? 'codex';
         abortCalls.set(key, (abortCalls.get(key) ?? 0) + 1);
         return key === 'codex';
       },
@@ -223,8 +223,8 @@ test('persists the active provider and preserves it across registry recreation',
             websocketUrl: 'ws://localhost:4000',
             cwd: '/repo/project-a',
             providers: [
-              { provider: 'codex', transport: 'stdio' },
-              { provider: 'qwen', transport: 'websocket' },
+              { id: 'codex', kind: 'codex', transport: 'stdio' },
+              { id: 'qwen', kind: 'qwen', transport: 'websocket' },
             ],
           }
         : null,
@@ -242,8 +242,8 @@ test('persists the active provider and preserves it across registry recreation',
             websocketUrl: 'ws://localhost:4000',
             cwd: '/repo/project-a',
             providers: [
-              { provider: 'codex', transport: 'stdio' },
-              { provider: 'qwen', transport: 'websocket' },
+              { id: 'codex', kind: 'codex', transport: 'stdio' },
+              { id: 'qwen', kind: 'qwen', transport: 'websocket' },
             ],
           }
         : null,

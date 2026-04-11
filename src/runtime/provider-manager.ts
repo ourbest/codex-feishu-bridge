@@ -5,7 +5,7 @@ import {
   defaultProviderDescriptors,
   providerToAdapterType,
   type ProviderDescriptor,
-  type ProviderName,
+  type ProviderKind,
   type ProviderState,
 } from './provider-registry.ts';
 
@@ -13,7 +13,7 @@ export interface ProviderManagerProjectConfig {
   projectInstanceId: string;
   cwd?: string;
   providers?: ProviderDescriptor[];
-  activeProvider?: ProviderName;
+  activeProvider?: string;
   command?: string;
   args?: string[];
   model?: string;
@@ -39,7 +39,7 @@ export interface ProviderManagerOptions {
   projectInstanceId?: string;
   cwd?: string;
   providers?: ProviderDescriptor[];
-  activeProvider?: ProviderName;
+  activeProvider?: string;
   command?: string;
   args?: string[];
   model?: string;
@@ -58,7 +58,7 @@ export interface ProviderManagerOptions {
   allocatePort?: () => Promise<number>;
   getPersistedState?: () => BridgeProjectStateRecord | null;
   setPersistedState?: (state: BridgeProjectStateRecord) => void;
-  onClientCreated?: (provider: ProviderName, client: CodexProjectClient) => void;
+  onClientCreated?: (providerId: string, client: CodexProjectClient) => void;
   createClient: (input: ProviderClientFactoryInput) => CodexProjectClient;
 }
 
@@ -69,9 +69,17 @@ type ProviderEntry = {
 
 function cloneDescriptor(descriptor: ProviderDescriptor): ProviderDescriptor {
   return {
-    provider: descriptor.provider,
+    id: descriptor.id,
+    kind: descriptor.kind,
     transport: descriptor.transport,
     ...(descriptor.port !== undefined ? { port: descriptor.port } : {}),
+    ...(descriptor.websocketUrl !== undefined ? { websocketUrl: descriptor.websocketUrl } : {}),
+    ...(descriptor.sshHost !== undefined ? { sshHost: descriptor.sshHost } : {}),
+    ...(descriptor.sshPort !== undefined ? { sshPort: descriptor.sshPort } : {}),
+    ...(descriptor.sshUser !== undefined ? { sshUser: descriptor.sshUser } : {}),
+    ...(descriptor.sshIdentityFile !== undefined ? { sshIdentityFile: descriptor.sshIdentityFile } : {}),
+    ...(descriptor.sshCommand !== undefined ? { sshCommand: descriptor.sshCommand } : {}),
+    ...(descriptor.sshArgs !== undefined ? { sshArgs: [...descriptor.sshArgs] } : {}),
   };
 }
 
@@ -137,9 +145,9 @@ export class ProviderManager {
   private readonly getProjectState?: (projectInstanceId: string) => BridgeProjectStateRecord | null;
   private readonly setProjectState?: (state: BridgeProjectStateRecord) => void;
   private readonly allocatePort?: () => Promise<number>;
-  private readonly onClientCreated?: (provider: ProviderName, client: CodexProjectClient) => void;
-  private readonly entries = new Map<ProviderName, ProviderEntry>();
-  private activeProvider: ProviderName;
+  private readonly onClientCreated?: (providerId: string, client: CodexProjectClient) => void;
+  private readonly entries = new Map<string, ProviderEntry>();
+  private activeProvider: string;
   private readonly clientProxy: CodexProjectClient;
 
   constructor(options: ProviderManagerOptions) {
@@ -152,7 +160,7 @@ export class ProviderManager {
     this.onClientCreated = options.onClientCreated;
 
     for (const descriptor of this.projectConfig.providers ?? defaultProviderDescriptors()) {
-      this.entries.set(descriptor.provider, {
+      this.entries.set(descriptor.id, {
         descriptor: cloneDescriptor(descriptor),
         client: null,
       });
@@ -160,8 +168,8 @@ export class ProviderManager {
 
     const persistedState = this.getProjectState?.(this.projectConfig.projectInstanceId) ?? null;
     const persistedActive = persistedState?.activeProvider;
-    if (persistedActive !== undefined && this.entries.has(persistedActive as ProviderName)) {
-      this.activeProvider = persistedActive as ProviderName;
+    if (persistedActive !== undefined && this.entries.has(persistedActive)) {
+      this.activeProvider = persistedActive;
     } else if (this.projectConfig.activeProvider !== undefined && this.entries.has(this.projectConfig.activeProvider)) {
       this.activeProvider = this.projectConfig.activeProvider;
     } else {
@@ -170,8 +178,8 @@ export class ProviderManager {
 
     if (persistedState?.websocketPorts !== undefined) {
       for (const [provider, port] of Object.entries(persistedState.websocketPorts)) {
-        if (typeof port === 'number' && this.entries.has(provider as ProviderName)) {
-          const entry = this.entries.get(provider as ProviderName);
+        if (typeof port === 'number' && this.entries.has(provider)) {
+          const entry = this.entries.get(provider);
           if (entry !== undefined) {
             entry.descriptor = { ...entry.descriptor, port };
           }
@@ -181,7 +189,7 @@ export class ProviderManager {
 
     if (persistedState?.startedProviders !== undefined) {
       for (const provider of persistedState.startedProviders) {
-        if (this.entries.has(provider as ProviderName)) {
+        if (this.entries.has(provider)) {
           // We remember the provider as started through persisted state; the client is recreated lazily.
         }
       }
@@ -263,7 +271,7 @@ export class ProviderManager {
     }
 
     const websocketPorts: Record<string, number> = {};
-    const startedProviders: ProviderName[] = [];
+    const startedProviders: string[] = [];
 
     for (const [provider, entry] of this.entries) {
       if (entry.client !== null) {
@@ -282,7 +290,7 @@ export class ProviderManager {
     });
   }
 
-  private async createStartedClient(provider: ProviderName): Promise<CodexProjectClient> {
+  private async createStartedClient(provider: string): Promise<CodexProjectClient> {
     const entry = this.entries.get(provider);
     if (entry === undefined) {
       throw new Error(`Unsupported provider: ${provider}`);
@@ -301,9 +309,9 @@ export class ProviderManager {
     const client = this.createClient({
       ...this.projectConfig,
       activeProvider: provider,
-      adapterType: providerToAdapterType(provider),
+      adapterType: providerToAdapterType(entry.descriptor.kind),
       transport: descriptor.transport,
-      websocketUrl: descriptor.port !== undefined ? `ws://127.0.0.1:${descriptor.port}` : this.projectConfig.websocketUrl,
+      websocketUrl: descriptor.port !== undefined ? `ws://127.0.0.1:${descriptor.port}` : descriptor.websocketUrl ?? this.projectConfig.websocketUrl,
       provider: descriptor,
     });
 
@@ -317,15 +325,15 @@ export class ProviderManager {
     return this.clientProxy;
   }
 
-  getActiveProviderName(): ProviderName {
+  getActiveProviderName(): string {
     return this.activeProvider;
   }
 
-  getActiveProvider(): ProviderName {
+  getActiveProvider(): string {
     return this.getActiveProviderName();
   }
 
-  async switchActiveProvider(provider: ProviderName): Promise<void> {
+  async switchActiveProvider(provider: string): Promise<void> {
     if (!this.entries.has(provider)) {
       throw new Error(`Unsupported provider: ${provider}`);
     }
@@ -334,7 +342,7 @@ export class ProviderManager {
     this.persistState();
   }
 
-  async setActiveProvider(provider: ProviderName): Promise<void> {
+  async setActiveProvider(provider: string): Promise<void> {
     await this.switchActiveProvider(provider);
   }
 
@@ -346,24 +354,25 @@ export class ProviderManager {
     return await this.ensureActiveProviderClient();
   }
 
-  async ensureProviderClient(provider: ProviderName): Promise<CodexProjectClient> {
+  async ensureProviderClient(provider: string): Promise<CodexProjectClient> {
     return await this.createStartedClient(provider);
   }
 
-  getStartedClient(provider: ProviderName): CodexProjectClient | null {
+  getStartedClient(provider: string): CodexProjectClient | null {
     return this.entries.get(provider)?.client ?? null;
   }
 
-  getDescriptor(provider: ProviderName): ProviderDescriptor | null {
+  getDescriptor(provider: string): ProviderDescriptor | null {
     const entry = this.entries.get(provider);
     return entry === undefined ? null : cloneDescriptor(entry.descriptor);
   }
 
   getProviderStates(): ProviderState[] {
     return [...this.entries.values()].map((entry) => ({
-      provider: entry.descriptor.provider,
+      id: entry.descriptor.id,
+      kind: entry.descriptor.kind,
       transport: entry.descriptor.transport,
-      active: entry.descriptor.provider === this.activeProvider,
+      active: entry.descriptor.id === this.activeProvider,
       started: entry.client !== null,
       ...(entry.descriptor.port !== undefined ? { port: entry.descriptor.port } : {}),
     }));
@@ -373,7 +382,7 @@ export class ProviderManager {
     return this.getProviderStates();
   }
 
-  getStartedProviderNames(): ProviderName[] {
+  getStartedProviderNames(): string[] {
     return [...this.entries.entries()].filter(([, entry]) => entry.client !== null).map(([provider]) => provider);
   }
 

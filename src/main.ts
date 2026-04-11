@@ -3,6 +3,7 @@ import https from 'node:https';
 import 'dotenv/config';
 
 import { createBridgeApp } from './app.ts';
+import { createSshStdioCodexClient } from './adapters/codex/index.ts';
 import {
   createLocalDevLarkTransport,
   resolveBridgeConfig,
@@ -18,6 +19,7 @@ import { QwenCodeClient } from './adapters/qwen-code/index.ts';
 import { OpencodeClient } from './adapters/opencode/index.ts';
 import { resolveConsoleRuntimeConfig, runCodexConsoleSession } from './runtime/codex-console.ts';
 import { createProjectRegistry } from './runtime/project-registry.ts';
+import type { ProviderDescriptor } from './runtime/provider-registry.ts';
 import { createProjectConfigWatcher } from './runtime/project-config-watcher.ts';
 import { createProjectManagementService } from './runtime/project-management-service.ts';
 import { loadProjectConfigs } from './runtime/project-discovery.ts';
@@ -343,7 +345,7 @@ export async function run(): Promise<void> {
           throw new Error('project registry is not initialized');
         }
 
-        await projectRegistryImpl.setActiveProvider(projectInstanceId, provider as 'codex' | 'cc' | 'qwen');
+        await projectRegistryImpl.setActiveProvider(projectInstanceId, provider);
       },
       async getProjectDiagnostics(projectInstanceId: string) {
         if (projectRegistryImpl === null) {
@@ -546,17 +548,85 @@ export async function run(): Promise<void> {
       if (!entry) return null;
       return entry;
     },
-    createClient: (projectInstanceId: string, config) => {
+    createClient: (projectInstanceId: string, config, provider?: ProviderDescriptor) => {
       const command = typeof config.command === 'string' && config.command.trim() !== '' ? config.command.trim() : 'codex';
       const args = Array.isArray(config.args) && config.args.length > 0 ? config.args : ['app-server'];
       const serviceName = typeof config.serviceName === 'string' && config.serviceName.trim() !== '' ? config.serviceName.trim() : 'lark-agent-bridge';
-      const transport = config.transport === 'stdio' ? 'stdio' : 'websocket';
+      const providerId = provider?.id ?? projectInstanceId;
+      const providerKind = provider?.kind ?? 'codex';
+      const providerTransport = provider?.transport ?? (config.transport === 'stdio' ? 'stdio' : 'websocket');
+      const sshHost = typeof provider?.sshHost === 'string' ? provider.sshHost.trim() : '';
+      const sshCommand = typeof provider?.sshCommand === 'string' ? provider.sshCommand.trim() : '';
       const websocketUrl =
-        transport === 'stdio'
-          ? undefined
+        typeof provider?.websocketUrl === 'string' && provider.websocketUrl.trim() !== ''
+          ? provider.websocketUrl.trim()
           : typeof config.websocketUrl === 'string' && config.websocketUrl.trim() !== ''
             ? config.websocketUrl.trim()
             : 'ws://127.0.0.1:4000';
+
+      if (provider !== undefined) {
+        if (provider.kind === 'cc' && provider.transport === 'ssh+stdio') {
+          if (sshHost === '') {
+            throw new Error(`Provider ${providerId} is missing sshHost`);
+          }
+          if (sshCommand === '') {
+            throw new Error(`Provider ${providerId} is missing sshCommand`);
+          }
+
+          return createSshStdioCodexClient({
+            command,
+            args,
+            cwd: config.cwd,
+            clientInfo: { name: 'lark-agent-bridge', title: 'Codex Bridge', version: '0.2.0-dev' },
+            getModel: () => config.model ?? projectConfigEntries.find((p) => p.projectInstanceId === projectInstanceId)?.model,
+            serviceName,
+            transport: 'stdio',
+            sshHost,
+            sshPort: provider.sshPort,
+            sshUser: provider.sshUser,
+            sshIdentityFile: provider.sshIdentityFile,
+            sshCommand,
+            sshArgs: provider.sshArgs,
+          });
+        }
+
+        if (provider.kind === 'codex' || provider.kind === 'cc') {
+          return new CodexAppServerClient({
+            command,
+            args,
+            cwd: config.cwd,
+            clientInfo: { name: 'lark-agent-bridge', title: 'Codex Bridge', version: '0.2.0-dev' },
+            getModel: () => config.model ?? projectConfigEntries.find((p) => p.projectInstanceId === projectInstanceId)?.model,
+            serviceName,
+            transport: providerTransport === 'ssh+stdio' ? 'websocket' : providerTransport,
+            websocketUrl,
+          });
+        }
+
+        if (provider.kind === 'qwen') {
+          return new QwenCodeClient({
+            cwd: config.cwd,
+            model: config.model,
+            pathToQwenExecutable: config.qwenExecutable ?? (command !== 'codex' ? command : undefined),
+          });
+        }
+
+        if (provider.kind === 'gemini') {
+          const geminiCommand =
+            typeof config.command === 'string' && config.command.trim() !== '' && config.command.trim() !== 'codex'
+              ? config.command.trim()
+              : 'gemini';
+          const geminiArgs =
+            Array.isArray(config.args) && !(config.args.length === 1 && config.args[0] === 'app-server')
+              ? config.args
+              : [];
+          return new GeminiCliClient({
+            command: geminiCommand,
+            args: geminiArgs,
+            cwd: config.cwd,
+          });
+        }
+      }
 
       if (config.adapterType === 'opencode') {
         return new OpencodeClient({
@@ -606,7 +676,7 @@ export async function run(): Promise<void> {
         clientInfo: { name: 'lark-agent-bridge', title: 'Codex Bridge', version: '0.2.0-dev' },
         getModel: () => config.model ?? projectConfigEntries.find((p) => p.projectInstanceId === projectInstanceId)?.model,
         serviceName,
-        transport,
+        transport: config.transport,
         websocketUrl,
       });
     },

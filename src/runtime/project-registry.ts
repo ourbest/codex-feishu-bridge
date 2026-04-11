@@ -4,7 +4,7 @@ import type { BridgeRouter } from '../core/router/router.ts';
 import type { BridgeStateStore } from '../storage/binding-store.ts';
 import type { Thread } from './thread-manager.ts';
 import { ProviderManager } from './provider-manager.ts';
-import type { ProviderDescriptor, ProviderName, ProviderState } from './provider-registry.ts';
+import type { ProviderDescriptor, ProviderKind, ProviderState } from './provider-registry.ts';
 
 export interface ProjectConfig {
   projectInstanceId: string;
@@ -18,7 +18,7 @@ export interface ProjectConfig {
   adapterType?: 'codex' | 'claude-code' | 'qwen-code' | 'opencode' | 'gemini-cli';
   qwenExecutable?: string;
   providers?: ProviderDescriptor[];
-  activeProvider?: ProviderName;
+  activeProvider?: string;
   /**
    * OpenCode (opencode serve) 相关配置。
    *
@@ -78,8 +78,8 @@ export interface ProjectRegistry {
   getLastThread(projectInstanceId: string, sessionId: string): Promise<string | null>;
   getHandler(projectInstanceId: string): ((input: { projectInstanceId: string; message: { text: string } }) => Promise<{ text: string } | null>) | null;
   getProjectProviders(projectInstanceId: string): Promise<ProviderState[]>;
-  getActiveProvider(projectInstanceId: string): Promise<ProviderName | null>;
-  setActiveProvider(projectInstanceId: string, provider: ProviderName): Promise<void>;
+  getActiveProvider(projectInstanceId: string): Promise<string | null>;
+  setActiveProvider(projectInstanceId: string, provider: string): Promise<void>;
   describeProject(projectInstanceId: string): Promise<ProjectState>;
   getProjectDiagnostics(projectInstanceId: string): Promise<ProjectDiagnostics | null>;
   stop(): Promise<void>;
@@ -364,7 +364,7 @@ export function createProjectRegistry(options: ProjectRegistryOptions): ProjectR
   async function createEntry(projectId: string, config: ProjectConfig) {
     const providerManager = new ProviderManager({
       projectConfig: config,
-      createClient: (input) => options.createClient(projectId, { ...input }, input.provider),
+          createClient: (input) => options.createClient(projectId, { ...input }, input.provider),
       getPersistedState: () => options.bridgeStateStore?.getProjectState(projectId) ?? null,
       setPersistedState: (state) => options.bridgeStateStore?.setProjectState(state),
       allocatePort: options.allocateWebSocketPort,
@@ -759,7 +759,8 @@ export function createProjectRegistry(options: ProjectRegistryOptions): ProjectR
         });
 
         return providerManager.getProviderStates().map((state) => ({
-          provider: state.provider,
+          id: state.id,
+          kind: state.kind,
           transport: state.transport,
           active: state.active,
           started: state.started,
@@ -768,7 +769,8 @@ export function createProjectRegistry(options: ProjectRegistryOptions): ProjectR
       }
 
       return entry.providerManager.getProviderStates().map((state) => ({
-        provider: state.provider,
+        id: state.id,
+        kind: state.kind,
         transport: state.transport,
         active: state.active,
         started: state.started,
@@ -776,7 +778,7 @@ export function createProjectRegistry(options: ProjectRegistryOptions): ProjectR
       }));
     },
 
-    async getActiveProvider(projectInstanceId: string): Promise<ProviderName | null> {
+    async getActiveProvider(projectInstanceId: string): Promise<string | null> {
       const entry = activeProjects.get(projectInstanceId);
       if (entry) {
         return entry.providerManager.getActiveProvider();
@@ -784,7 +786,7 @@ export function createProjectRegistry(options: ProjectRegistryOptions): ProjectR
 
       const persistedState = options.bridgeStateStore?.getProjectState(projectInstanceId);
       if (persistedState?.activeProvider !== undefined) {
-        return persistedState.activeProvider as ProviderName;
+        return persistedState.activeProvider;
       }
 
       const config = options.getProjectConfig(projectInstanceId);
@@ -792,10 +794,10 @@ export function createProjectRegistry(options: ProjectRegistryOptions): ProjectR
         return null;
       }
 
-      return config.activeProvider ?? config.providers?.[0]?.provider ?? 'codex';
+      return config.activeProvider ?? config.providers?.[0]?.id ?? 'codex';
     },
 
-    async setActiveProvider(projectInstanceId: string, provider: ProviderName): Promise<void> {
+    async setActiveProvider(projectInstanceId: string, provider: string): Promise<void> {
       const entry = activeProjects.get(projectInstanceId);
       if (!entry) {
         const config = options.getProjectConfig(projectInstanceId);

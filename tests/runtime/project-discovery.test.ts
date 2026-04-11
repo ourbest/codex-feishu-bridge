@@ -23,20 +23,20 @@ test('discovers visible project directories from a root folder', () => {
       projectInstanceId: 'alpha',
       cwd: join(root, 'alpha'),
       providers: [
-        { provider: 'codex', transport: 'stdio' },
-        { provider: 'cc', transport: 'stdio' },
-        { provider: 'qwen', transport: 'stdio' },
-        { provider: 'gemini', transport: 'stdio' },
+        { id: 'codex', kind: 'codex', transport: 'stdio' },
+        { id: 'cc', kind: 'cc', transport: 'stdio' },
+        { id: 'qwen', kind: 'qwen', transport: 'stdio' },
+        { id: 'gemini', kind: 'gemini', transport: 'stdio' },
       ],
     },
     {
       projectInstanceId: 'beta',
       cwd: join(root, 'beta'),
       providers: [
-        { provider: 'codex', transport: 'stdio' },
-        { provider: 'cc', transport: 'stdio' },
-        { provider: 'qwen', transport: 'stdio' },
-        { provider: 'gemini', transport: 'stdio' },
+        { id: 'codex', kind: 'codex', transport: 'stdio' },
+        { id: 'cc', kind: 'cc', transport: 'stdio' },
+        { id: 'qwen', kind: 'qwen', transport: 'stdio' },
+        { id: 'gemini', kind: 'gemini', transport: 'stdio' },
       ],
     },
   ]);
@@ -50,7 +50,7 @@ test('merges explicit and discovered projects by projectInstanceId', () => {
       {
         projectInstanceId: 'alpha',
         cwd: '/explicit/alpha',
-        providers: [{ provider: 'codex', transport: 'stdio' }],
+        providers: [{ id: 'codex', kind: 'codex', transport: 'stdio' }],
       },
     ],
     [
@@ -58,20 +58,20 @@ test('merges explicit and discovered projects by projectInstanceId', () => {
         projectInstanceId: 'alpha',
         cwd: '/discovered/alpha',
         providers: [
-          { provider: 'codex', transport: 'stdio' },
-          { provider: 'cc', transport: 'stdio' },
-          { provider: 'qwen', transport: 'stdio' },
-          { provider: 'gemini', transport: 'stdio' },
+          { id: 'codex', kind: 'codex', transport: 'stdio' },
+          { id: 'cc', kind: 'cc', transport: 'stdio' },
+          { id: 'qwen', kind: 'qwen', transport: 'stdio' },
+          { id: 'gemini', kind: 'gemini', transport: 'stdio' },
         ],
       },
       {
         projectInstanceId: 'beta',
         cwd: '/discovered/beta',
         providers: [
-          { provider: 'codex', transport: 'stdio' },
-          { provider: 'cc', transport: 'stdio' },
-          { provider: 'qwen', transport: 'stdio' },
-          { provider: 'gemini', transport: 'stdio' },
+          { id: 'codex', kind: 'codex', transport: 'stdio' },
+          { id: 'cc', kind: 'cc', transport: 'stdio' },
+          { id: 'qwen', kind: 'qwen', transport: 'stdio' },
+          { id: 'gemini', kind: 'gemini', transport: 'stdio' },
         ],
       },
     ],
@@ -81,16 +81,16 @@ test('merges explicit and discovered projects by projectInstanceId', () => {
     {
       projectInstanceId: 'alpha',
       cwd: '/explicit/alpha',
-      providers: [{ provider: 'codex', transport: 'stdio' }],
+      providers: [{ id: 'codex', kind: 'codex', transport: 'stdio' }],
     },
     {
       projectInstanceId: 'beta',
       cwd: '/discovered/beta',
       providers: [
-        { provider: 'codex', transport: 'stdio' },
-        { provider: 'cc', transport: 'stdio' },
-        { provider: 'qwen', transport: 'stdio' },
-        { provider: 'gemini', transport: 'stdio' },
+        { id: 'codex', kind: 'codex', transport: 'stdio' },
+        { id: 'cc', kind: 'cc', transport: 'stdio' },
+        { id: 'qwen', kind: 'qwen', transport: 'stdio' },
+        { id: 'gemini', kind: 'gemini', transport: 'stdio' },
       ],
     },
   ]);
@@ -113,10 +113,10 @@ test('loads merged projects from file and root discovery', () => {
       projectInstanceId: 'beta',
       cwd: join(root, 'beta'),
       providers: [
-        { provider: 'codex', transport: 'stdio' },
-        { provider: 'cc', transport: 'stdio' },
-        { provider: 'qwen', transport: 'stdio' },
-        { provider: 'gemini', transport: 'stdio' },
+        { id: 'codex', kind: 'codex', transport: 'stdio' },
+        { id: 'cc', kind: 'cc', transport: 'stdio' },
+        { id: 'qwen', kind: 'qwen', transport: 'stdio' },
+        { id: 'gemini', kind: 'gemini', transport: 'stdio' },
       ],
     },
   ]);
