@@ -55,6 +55,11 @@ function buildFooterMarkdown(items: CardFooterItem[]): Record<string, unknown> {
   };
 }
 
+function buildCodeBlockMarkdown(lines: string[]): string {
+  const sanitizedLines = lines.map((line) => line.replaceAll('```', '``\\`'));
+  return ['```text', ...sanitizedLines, '```'].join('\n');
+}
+
 export function buildInteractiveCardMessage(card: FeishuInteractiveCardContent): FeishuInteractiveCardMessage {
   return {
     msg_type: 'interactive',
@@ -172,11 +177,6 @@ export function buildMarkdownContentCard(input: {
   });
 }
 
-function buildCodeBlockMarkdown(lines: string[]): string {
-  const sanitizedLines = lines.map((line) => line.replaceAll('```', '``\\`'));
-  return ['```text', ...sanitizedLines, '```'].join('\n');
-}
-
 export function buildCommandResultCard(input: {
   title: string;
   lines: string[];
@@ -186,7 +186,7 @@ export function buildCommandResultCard(input: {
   const elements: Array<Record<string, unknown>> = [
     {
       tag: 'markdown',
-      content: buildCodeBlockMarkdown(input.lines),
+      content: input.lines.join('\n'),
     },
   ];
 
@@ -366,6 +366,101 @@ export function buildStartupNotificationCard(input: { title: string; bodyMarkdow
   });
 }
 
+export function buildThreadListCard(input: {
+  threads: Array<{
+    id: string;
+    name: string;
+    description: string;
+    status: 'running' | 'paused' | 'completed' | 'failed';
+    createdAt: Date;
+    duration?: string;
+  }>;
+  refresh?: boolean;
+}): FeishuInteractiveCardMessage {
+  const statusIcon = (status: string) => {
+    switch (status) {
+      case 'running':  return '●';
+      case 'paused':   return '○';
+      case 'completed': return '✅';
+      case 'failed':   return '❌';
+      default:         return '○';
+    }
+  };
+
+  const statusText = (status: string) => {
+    switch (status) {
+      case 'running':  return '运行中';
+      case 'paused':   return '已暂停';
+      case 'completed': return '已完成';
+      case 'failed':   return '失败';
+      default:         return status;
+    }
+  };
+
+  const buildThreadBlock = (thread: typeof input.threads[number]) => {
+    const lines = [
+      `${statusIcon(thread.status)} **${thread.name}**`,
+      `   描述：${thread.description}`,
+      `   状态：${statusText(thread.status)}  时长：${thread.duration ?? '—'}`,
+    ];
+
+    const elements: Array<Record<string, unknown>> = [
+      { tag: 'markdown', content: lines.join('\n'), margin: '8px 0' },
+    ];
+
+    if (thread.status === 'running' || thread.status === 'paused') {
+      const actions: Array<Record<string, unknown>> = [
+        { tag: 'button', text: { tag: 'plain_text', content: '取消' }, type: 'default', value: { action: 'thread-cancel', threadId: thread.id } },
+      ];
+      if (thread.status === 'running') {
+        actions.push({ tag: 'button', text: { tag: 'plain_text', content: '暂停' }, type: 'default', value: { action: 'thread-pause', threadId: thread.id } });
+      } else {
+        actions.push({ tag: 'button', text: { tag: 'plain_text', content: '恢复' }, type: 'primary', value: { action: 'thread-resume', threadId: thread.id } });
+      }
+      elements.push({
+        tag: 'column_set',
+        columns: actions.map((btn) => ({
+          tag: 'column',
+          width: 'stretch',
+          elements: [btn],
+        })),
+        margin: '4px 0',
+      });
+    }
+
+    elements.push({ tag: 'hr', margin: '4px 0' });
+    return elements;
+  };
+
+  const allElements: Array<Record<string, unknown>> = [];
+  for (const thread of input.threads) {
+    allElements.push(...buildThreadBlock(thread));
+  }
+
+  if (input.refresh) {
+    allElements.push({
+      tag: 'action',
+      actions: [
+        { tag: 'button', text: { tag: 'plain_text', content: '🔄 刷新' }, type: 'default', value: { action: 'thread-refresh' } },
+      ],
+    });
+  }
+
+  return buildInteractiveCardMessage({
+    schema: '2.0',
+    config: {
+      enable_forward: true,
+      update_multi: true,
+      width_mode: 'fill',
+    },
+    header: {
+      template: 'blue',
+      title: plainText('🧵 后台任务'),
+    },
+    body: { elements: allElements },
+  });
+}
+
 export function buildHelpCard(input: {
   title?: string;
   subtitle?: string;
@@ -373,12 +468,12 @@ export function buildHelpCard(input: {
   codexCommands: Array<{ command: string; description: string }>;
 }): FeishuInteractiveCardMessage {
   const bridgeMarkdown = [
-    '### Bridge commands',
+    '## Bridge commands',
     ...input.bridgeCommands.map((item) => `- \`${item.command}\`  \n  ${item.description}`),
   ].join('\n');
 
   const codexMarkdown = [
-    '### Codex commands',
+    '## Codex commands',
     ...input.codexCommands.map((item) => `- \`${item.command}\`  \n  ${item.description}`),
   ].join('\n');
 
