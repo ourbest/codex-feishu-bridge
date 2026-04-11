@@ -693,6 +693,11 @@ export function extractCardActionCommand(payload: unknown): string | null {
 export function extractCardActionDetails(payload: unknown): {
   action: 'approve' | 'approve-all' | 'approve-auto' | 'deny';
   requestId: string | null;
+  threadId?: never;
+} | {
+  action: 'thread-cancel' | 'thread-pause' | 'thread-resume' | 'thread-refresh';
+  threadId: string | null;
+  requestId?: never;
 } | null {
   if (typeof payload !== 'object' || payload === null) {
     return null;
@@ -720,20 +725,45 @@ export function extractCardActionDetails(payload: unknown): {
     }
 
     const action = readActionKind(candidate);
-    if (action !== 'approve' && action !== 'approve-all' && action !== 'approve-auto' && action !== 'deny') {
-      continue;
+
+    // Handle approval actions
+    if (action === 'approve' || action === 'approve-all' || action === 'approve-auto' || action === 'deny') {
+      const requestId =
+        readActionRequestId(readNestedRecord(candidate, 'requestId')) ??
+        readActionRequestId(readNestedRecord(candidate, 'request_id')) ??
+        readActionRequestId(readNestedRecord(candidate, 'id')) ??
+        readActionRequestId(candidate);
+
+      return {
+        action,
+        requestId,
+      };
     }
 
-    const requestId =
-      readActionRequestId(readNestedRecord(candidate, 'requestId')) ??
-      readActionRequestId(readNestedRecord(candidate, 'request_id')) ??
-      readActionRequestId(readNestedRecord(candidate, 'id')) ??
-      readActionRequestId(candidate);
+    // Handle thread actions
+    if (action === 'thread-cancel' || action === 'thread-pause' || action === 'thread-resume' || action === 'thread-refresh') {
+      const threadId = readThreadId(candidate);
+      return {
+        action,
+        threadId,
+      };
+    }
+  }
 
-    return {
-      action,
-      requestId,
-    };
+  return null;
+}
+
+function readThreadId(value: unknown): string | null {
+  if (typeof value !== 'object' || value === null) {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  const candidates = [record.threadId, record.thread_id, record.id, record.value];
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim() !== '') {
+      return candidate;
+    }
   }
 
   return null;

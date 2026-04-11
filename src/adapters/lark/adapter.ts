@@ -12,6 +12,9 @@ export interface LarkEventPayload {
   cardAction?: {
     action: 'approve' | 'approve-all' | 'approve-auto' | 'deny';
     requestId: string;
+  } | {
+    action: 'thread-cancel' | 'thread-pause' | 'thread-resume' | 'thread-refresh';
+    threadId: string;
   };
 }
 

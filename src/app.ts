@@ -21,6 +21,7 @@ import {
   buildHelpCard,
   buildMarkdownContentCard,
   buildProjectReplyCard,
+  buildThreadListCard,
   buildUnavailableProjectCard,
   buildUnboundCard,
   buildFileReceivedCard,
@@ -66,6 +67,7 @@ const HELP_CARD_BRIDGE_COMMANDS = [
   { command: '//provider <name>', description: 'Switch the active provider.' },
   { command: '//new', description: 'Start a fresh Codex thread for this chat.' },
   { command: '//status', description: 'Show bridge and Codex session state.' },
+  { command: '//abort', description: 'Abort the current task.' },
   { command: '//read <path>', description: 'Read a project file as a Markdown card.' },
   { command: '//model <model>', description: 'Set the active model for the bound project.' },
   { command: '//reload projects', description: 'Reload the projects.json file.' },
@@ -95,6 +97,11 @@ function isHelpCommand(text: string): boolean {
 function isRestartCommand(text: string): boolean {
   const normalized = text.trim().toLowerCase();
   return normalized === '//restart';
+}
+
+function isAbortCommand(text: string): boolean {
+  const normalized = text.trim().toLowerCase();
+  return normalized === '//abort';
 }
 
 function isApproveTestCommand(text: string): boolean {
@@ -256,6 +263,20 @@ function buildCompletionStatusFallback(projectId: string): string {
   return `[lark-agent-bridge] completed request for ${projectId}`;
 }
 
+function buildEmptyReplyFallback(projectTitle: string): string {
+  return `[lark-agent-bridge] empty reply from ${projectTitle}`;
+}
+
+function logEmptyReplyFallback(input: {
+  projectId: string;
+  sessionId: string;
+  requestTextLength: number;
+}): void {
+  console.warn(
+    `[lark-agent-bridge] empty reply fallback: project=${input.projectId} session=${input.sessionId} requestLength=${input.requestTextLength}`,
+  );
+}
+
 function deriveCommandCardTitle(text: string): string {
   const trimmed = text.trim();
   if (trimmed === '') {
@@ -398,7 +419,12 @@ export function createBridgeApp(options: {
     setActiveProvider?(projectInstanceId: string, provider: string): Promise<void>;
     updateProjectConfig?(projectInstanceId: string, input: { model?: string | null }): Promise<ProjectConfig | null> | ProjectConfig | null;
     startThread?(projectInstanceId: string, options?: { cwd?: string; force?: boolean }): Promise<string>;
+    abortCurrentTask?(projectInstanceId: string): Promise<boolean>;
     restoreBinding?(projectInstanceId: string, sessionId: string): Promise<void>;
+    listThreads?(projectInstanceId: string): Promise<Array<{ id: string; name: string; description: string; status: 'running' | 'paused' | 'completed' | 'failed'; createdAt: Date; duration?: string }>>;
+    cancelThread?(projectInstanceId: string, threadId: string): Promise<void>;
+    pauseThread?(projectInstanceId: string, threadId: string): Promise<void>;
+    resumeThread?(projectInstanceId: string, threadId: string): Promise<void>;
   };
   approvalService?: ApprovalService;
   reloadProjects?: () => Promise<string[]>;
@@ -574,41 +600,91 @@ export function createBridgeApp(options: {
       text: message.text,
     });
 
-    if (message.cardAction !== undefined && options.approvalService !== undefined) {
+    if (message.cardAction !== undefined) {
+      const cardAction = message.cardAction;
       const projectId = await bindingService.getProjectBySession(message.sessionId);
-      if (projectId !== null) {
-        const result = await options.approvalService.handleAction({
-          sessionId: message.sessionId,
-          projectInstanceId: projectId,
-          action: message.cardAction.action,
-          requestId: message.cardAction.requestId,
-        });
 
-        if (result !== null) {
-          for (const update of result.updates) {
-            const messageId = update.messageId ?? (update.requestId === message.messageId ? message.messageId : null);
-            if (messageId === null) {
-              continue;
-            }
+      // Handle thread card actions
+      if (projectId !== null && 'threadId' in cardAction) {
+        const { action, threadId } = cardAction;
 
-            try {
-              await larkAdapter.updateCard({
-                sessionId: message.sessionId,
-                messageId,
-                card: update.card,
-                fallbackText: result.lines.join('\n'),
-              });
-            } catch (error) {
-              const reason = error instanceof Error && error.message !== '' ? error.message : String(error ?? 'unknown error');
-              console.error(
-                `[lark-agent-bridge] approval card update failed: project=${projectId} session=${message.sessionId} messageId=${messageId} reason="${reason}"`,
-              );
+        try {
+          if (action === 'thread-refresh' && options.projectRegistry.listThreads) {
+            const threads = await options.projectRegistry.listThreads(projectId);
+            await larkAdapter.sendCard({
+              targetSessionId: message.sessionId,
+              card: buildThreadListCard({ threads, refresh: true }),
+              fallbackText: threads.map((t) => `${t.name} (${t.status})`).join('\n'),
+            });
+          } else if (action === 'thread-cancel' && options.projectRegistry.cancelThread) {
+            await options.projectRegistry.cancelThread(projectId, threadId);
+            const threads = await options.projectRegistry.listThreads(projectId);
+            await larkAdapter.sendCard({
+              targetSessionId: message.sessionId,
+              card: buildThreadListCard({ threads, refresh: true }),
+              fallbackText: threads.map((t) => `${t.name} (${t.status})`).join('\n'),
+            });
+          } else if (action === 'thread-pause' && options.projectRegistry.pauseThread) {
+            await options.projectRegistry.pauseThread(projectId, threadId);
+            const threads = await options.projectRegistry.listThreads(projectId);
+            await larkAdapter.sendCard({
+              targetSessionId: message.sessionId,
+              card: buildThreadListCard({ threads, refresh: true }),
+              fallbackText: threads.map((t) => `${t.name} (${t.status})`).join('\n'),
+            });
+          } else if (action === 'thread-resume' && options.projectRegistry.resumeThread) {
+            await options.projectRegistry.resumeThread(projectId, threadId);
+            const threads = await options.projectRegistry.listThreads(projectId);
+            await larkAdapter.sendCard({
+              targetSessionId: message.sessionId,
+              card: buildThreadListCard({ threads, refresh: true }),
+              fallbackText: threads.map((t) => `${t.name} (${t.status})`).join('\n'),
+            });
+          }
+        } catch (error) {
+          const reason = error instanceof Error && error.message !== '' ? error.message : String(error ?? 'unknown error');
+          console.error(`[lark-agent-bridge] thread action ${action} failed: project=${projectId} session=${message.sessionId} threadId=${threadId} reason="${reason}"`);
+        }
+
+        return;
+      }
+
+      // Handle approval card actions
+      if ('requestId' in cardAction && options.approvalService !== undefined) {
+        if (projectId !== null) {
+          const result = await options.approvalService.handleAction({
+            sessionId: message.sessionId,
+            projectInstanceId: projectId,
+            action: cardAction.action,
+            requestId: cardAction.requestId,
+          });
+
+          if (result !== null) {
+            for (const update of result.updates) {
+              const messageId = update.messageId ?? (update.requestId === message.messageId ? message.messageId : null);
+              if (messageId === null) {
+                continue;
+              }
+
+              try {
+                await larkAdapter.updateCard({
+                  sessionId: message.sessionId,
+                  messageId,
+                  card: update.card,
+                  fallbackText: result.lines.join('\n'),
+                });
+              } catch (error) {
+                const reason = error instanceof Error && error.message !== '' ? error.message : String(error ?? 'unknown error');
+                console.error(
+                  `[lark-agent-bridge] approval card update failed: project=${projectId} session=${message.sessionId} messageId=${messageId} reason="${reason}"`,
+                );
+              }
             }
           }
         }
-      }
 
-      return;
+        return;
+      }
     }
 
     const text = message.text.trim();
@@ -846,6 +922,23 @@ export function createBridgeApp(options: {
         fallbackText: commandLines.join('\n'),
       });
 
+      if (isAbortCommand(text)) {
+        const projectId = await bindingService.getProjectBySession(message.sessionId);
+        if (projectId !== null) {
+          const aborted = await options.projectRegistry.abortCurrentTask?.(projectId);
+          if (!aborted) {
+            await larkAdapter.sendCard({
+              targetSessionId: message.sessionId,
+              card: buildCommandResultCard({
+                title: 'abort',
+                lines: [`[lark-agent-bridge] no active task for ${projectId}`],
+              }),
+              fallbackText: `[lark-agent-bridge] no active task for ${projectId}`,
+            });
+          }
+        }
+      }
+
       if (isRestartCommand(text)) {
         await options.onRestartRequested?.({
           sessionId: message.sessionId,
@@ -1013,25 +1106,37 @@ export function createBridgeApp(options: {
 
     if (outboundMessage !== null) {
       const projectId = boundProjectId ?? await bindingService.getProjectBySession(message.sessionId);
-      if (projectId === null) {
-        return;
-      }
-      const projectConfig = boundProjectConfig ?? options.projectRegistry.getProjectConfig?.(projectId);
-      const replyCard = buildProjectReplyCard({
-        projectTitle: projectConfig?.projectInstanceId ?? projectId,
-        bodyMarkdown: outboundMessage.text,
-        footerItems: buildProjectFooterItems(
-          projectId,
-          projectConfig,
-          options.projectRegistry.getActiveProvider === undefined
-            ? projectConfig?.activeProvider ?? null
+    if (projectId === null) {
+      return;
+    }
+    const projectConfig = boundProjectConfig ?? options.projectRegistry.getProjectConfig?.(projectId);
+    const replyText =
+      outboundMessage.text.trim() === ''
+        ? (() => {
+            const resolvedProjectId = projectConfig?.projectInstanceId ?? projectId;
+            logEmptyReplyFallback({
+              projectId: resolvedProjectId,
+              sessionId: message.sessionId,
+              requestTextLength: message.text.length,
+            });
+            return buildEmptyReplyFallback(resolvedProjectId);
+          })()
+        : outboundMessage.text;
+    const replyCard = buildProjectReplyCard({
+      projectTitle: projectConfig?.projectInstanceId ?? projectId,
+      bodyMarkdown: replyText,
+      footerItems: buildProjectFooterItems(
+        projectId,
+        projectConfig,
+        options.projectRegistry.getActiveProvider === undefined
+          ? projectConfig?.activeProvider ?? null
             : await options.projectRegistry.getActiveProvider(projectId),
         ),
       });
       await larkAdapter.sendCard({
         targetSessionId: message.sessionId,
         card: replyCard,
-        fallbackText: outboundMessage.text,
+        fallbackText: replyText,
       });
 
       // 如果有非图片文件，回复收到文件卡片
@@ -1066,7 +1171,7 @@ export function createBridgeApp(options: {
         : '';
 
       const fallbackText =
-        `[lark-agent-bridge] unbound session. chatId: ${message.sessionId}, openId: ${message.senderId}${attachmentNote}\n\nCommands:\n  //bind <projectId> - bind this chat to a project\n  //unbind - unbind this chat\n  //list - list all bindings\n  //projects - list all projects\n  //providers - list providers for the bound project\n  //provider <name> - switch the active provider\n  //new - start a new codex thread for this chat\n  //status - show bridge and codex state\n  //reload projects - reload projects.json\n  //help - show this help`;
+        `[lark-agent-bridge] unbound session. chatId: ${message.sessionId}, openId: ${message.senderId}${attachmentNote}\n\nCommands:\n  //bind <projectId> - bind this chat to a project\n  //unbind - unbind this chat\n  //list - list all bindings\n  //projects - list all projects\n  //providers - list providers for the bound project\n  //provider <name> - switch the active provider\n  //new - start a new codex thread for this chat\n  //status - show bridge and codex state\n  //abort - abort the current task\n  //reload projects - reload projects.json\n  //help - show this help`;
 
       if (hasAttachments) {
         // When there are attachments, use a content card that shows the attachment warning

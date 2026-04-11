@@ -254,7 +254,12 @@ export function createFeishuWebSocketTransport(options: FeishuWebSocketTransport
                   action: details.action,
                   requestId: details.requestId,
                 }
-              : undefined,
+              : details !== null && 'threadId' in details && details.threadId !== null
+                ? {
+                    action: details.action,
+                    threadId: details.threadId,
+                  }
+                : undefined,
         };
 
         void eventHandler?.(event);
