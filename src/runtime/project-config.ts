@@ -3,12 +3,22 @@ import path from 'node:path';
 
 const SERIALIZED_CWD = Symbol('serializedCwd');
 
-export type ProjectProviderName = 'codex' | 'cc' | 'qwen' | 'gemini';
+export type ProjectProviderKind = 'codex' | 'cc' | 'qwen' | 'gemini';
+export type ProjectProviderName = ProjectProviderKind;
 
 export interface ProjectProviderConfig {
-  provider: ProjectProviderName;
-  transport?: 'stdio' | 'websocket';
+  id: string;
+  kind: ProjectProviderKind;
+  transport?: 'stdio' | 'websocket' | 'ssh+stdio';
   port?: number;
+  websocketUrl?: string;
+  sshHost?: string;
+  sshPort?: number;
+  sshUser?: string;
+  sshIdentityFile?: string;
+  sshCommand?: string;
+  sshArgs?: string[];
+  provider?: ProjectProviderKind;
 }
 
 export interface ProjectConfig {
@@ -53,21 +63,21 @@ export function resolvePathLikeInput(value: string | undefined, homeDir: string 
   return trimmed;
 }
 
-function normalizeProviderName(value: unknown): ProjectProviderName {
+function normalizeProviderKind(value: unknown): ProjectProviderKind {
   if (value !== 'codex' && value !== 'cc' && value !== 'qwen' && value !== 'gemini') {
-    throw new Error('provider must be one of codex, cc, qwen, or gemini');
+    throw new Error('provider kind must be one of codex, cc, qwen, or gemini');
   }
 
   return value;
 }
 
-function normalizeProviderTransport(value: unknown): 'stdio' | 'websocket' {
+function normalizeProviderTransport(value: unknown): 'stdio' | 'websocket' | 'ssh+stdio' {
   if (value === undefined || value === null || value === '') {
     return 'stdio';
   }
 
-  if (value !== 'stdio' && value !== 'websocket') {
-    throw new Error('provider transport must be stdio or websocket');
+  if (value !== 'stdio' && value !== 'websocket' && value !== 'ssh+stdio') {
+    throw new Error('provider transport must be stdio, websocket, or ssh+stdio');
   }
 
   return value;
@@ -79,7 +89,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function defaultProviders(): ProjectProviderConfig[] {
   return DEFAULT_PROJECT_PROVIDER_NAMES.map((provider) => ({
-    provider,
+    id: provider,
+    kind: provider,
     transport: 'stdio',
   }));
 }
@@ -89,17 +100,44 @@ export function normalizeProjectProviders(providers: unknown): ProjectProviderCo
     return defaultProviders();
   }
 
-  return providers.map((entry) => {
+  const normalizedProviders: ProjectProviderConfig[] = [];
+
+  for (const entry of providers) {
     if (!isRecord(entry)) {
       throw new Error('providers entries must be objects');
     }
 
-    return {
-      provider: normalizeProviderName(entry.provider),
+    const id =
+      typeof entry.id === 'string' && entry.id.trim() !== ''
+        ? entry.id.trim()
+        : typeof entry.provider === 'string' && entry.provider.trim() !== ''
+          ? entry.provider.trim()
+          : '';
+    if (id === '') {
+      throw new Error('provider id is required');
+    }
+
+    const kind = normalizeProviderKind(typeof entry.kind === 'string' ? entry.kind : entry.provider);
+    if (normalizedProviders.some((provider) => provider.id === id)) {
+      throw new Error(`duplicate provider id: ${id}`);
+    }
+
+    normalizedProviders.push({
+      id,
+      kind,
       transport: normalizeProviderTransport(entry.transport),
       ...(typeof entry.port === 'number' ? { port: entry.port } : {}),
-    };
-  });
+      ...(typeof entry.websocketUrl === 'string' ? { websocketUrl: entry.websocketUrl } : {}),
+      ...(typeof entry.sshHost === 'string' ? { sshHost: entry.sshHost } : {}),
+      ...(typeof entry.sshPort === 'number' ? { sshPort: entry.sshPort } : {}),
+      ...(typeof entry.sshUser === 'string' ? { sshUser: entry.sshUser } : {}),
+      ...(typeof entry.sshIdentityFile === 'string' ? { sshIdentityFile: entry.sshIdentityFile } : {}),
+      ...(typeof entry.sshCommand === 'string' ? { sshCommand: entry.sshCommand } : {}),
+      ...(Array.isArray(entry.sshArgs) ? { sshArgs: entry.sshArgs as string[] } : {}),
+    });
+  }
+
+  return normalizedProviders;
 }
 
 export function normalizeProjectConfig(input: ProjectConfigInput, options?: { homeDir?: string }): ProjectConfig {
@@ -181,10 +219,11 @@ export function parseProjectConfigEntries(raw: string, options?: { homeDir?: str
       }
 
       const normalized = normalizeProjectConfig(entry, options);
+      const { provider: _provider, ...rest } = entry;
       projects.push(
         createProjectConfigEntry(
           {
-            ...entry,
+            ...rest,
             projectInstanceId: normalized.projectInstanceId,
             cwd: normalized.cwd,
             providers: normalized.providers,

@@ -14,6 +14,15 @@ import {
 import { normalizeProjectConfig } from '../../src/runtime/project-config.ts';
 import { createProjectConfigWatcher } from '../../src/runtime/project-config-watcher.ts';
 
+function defaultProviders() {
+  return [
+    { id: 'codex', kind: 'codex', transport: 'stdio' as const },
+    { id: 'cc', kind: 'cc', transport: 'stdio' as const },
+    { id: 'qwen', kind: 'qwen', transport: 'stdio' as const },
+    { id: 'gemini', kind: 'gemini', transport: 'stdio' as const },
+  ];
+}
+
 test('requires projectInstanceId and cwd for explicit project configs', () => {
   assert.throws(() => normalizeProjectConfig({ cwd: '/repo/a' }), /projectInstanceId/i);
   assert.throws(() => normalizeProjectConfig({ projectInstanceId: 'project-a' }), /cwd/i);
@@ -23,23 +32,13 @@ test('defaults providers when they are omitted or empty', () => {
   assert.deepEqual(normalizeProjectConfig({ projectInstanceId: 'project-a', cwd: '/repo/a' }), {
     projectInstanceId: 'project-a',
     cwd: '/repo/a',
-    providers: [
-      { provider: 'codex', transport: 'stdio' },
-      { provider: 'cc', transport: 'stdio' },
-      { provider: 'qwen', transport: 'stdio' },
-      { provider: 'gemini', transport: 'stdio' },
-    ],
+    providers: defaultProviders(),
   });
 
   assert.deepEqual(normalizeProjectConfig({ projectInstanceId: 'project-a', cwd: '/repo/a', providers: [] }), {
     projectInstanceId: 'project-a',
     cwd: '/repo/a',
-    providers: [
-      { provider: 'codex', transport: 'stdio' },
-      { provider: 'cc', transport: 'stdio' },
-      { provider: 'qwen', transport: 'stdio' },
-      { provider: 'gemini', transport: 'stdio' },
-    ],
+    providers: defaultProviders(),
   });
 });
 
@@ -49,16 +48,16 @@ test('preserves explicit provider order when normalizing project configs', () =>
       projectInstanceId: 'project-a',
       cwd: '/repo/a',
       providers: [
-        { provider: 'qwen', transport: 'websocket', port: 8081 },
-        { provider: 'codex', transport: 'stdio' },
+        { id: 'qwen-remote', kind: 'qwen', transport: 'websocket', port: 8081 },
+        { id: 'codex-local', kind: 'codex', transport: 'stdio' },
       ],
     }),
     {
       projectInstanceId: 'project-a',
       cwd: '/repo/a',
       providers: [
-        { provider: 'qwen', transport: 'websocket', port: 8081 },
-        { provider: 'codex', transport: 'stdio' },
+        { id: 'qwen-remote', kind: 'qwen', transport: 'websocket', port: 8081 },
+        { id: 'codex-local', kind: 'codex', transport: 'stdio' },
       ],
     },
   );
@@ -69,12 +68,67 @@ test('accepts gemini as an explicit provider name', () => {
     normalizeProjectConfig({
       projectInstanceId: 'project-a',
       cwd: '/repo/a',
-      providers: [{ provider: 'gemini', transport: 'stdio' }],
+      providers: [{ id: 'gemini-local', kind: 'gemini', transport: 'stdio' }],
     }),
     {
       projectInstanceId: 'project-a',
       cwd: '/repo/a',
-      providers: [{ provider: 'gemini', transport: 'stdio' }],
+      providers: [{ id: 'gemini-local', kind: 'gemini', transport: 'stdio' }],
+    },
+  );
+});
+
+test('normalizes explicit provider ids and kinds', () => {
+  assert.deepEqual(
+    normalizeProjectConfig({
+      projectInstanceId: 'project-a',
+      cwd: '/repo/a',
+      providers: [
+        {
+          id: 'cc-east',
+          kind: 'cc',
+          transport: 'websocket',
+          websocketUrl: 'ws://cc-east.example.com:4000',
+        },
+      ],
+    }),
+    {
+      projectInstanceId: 'project-a',
+      cwd: '/repo/a',
+      providers: [
+        {
+          id: 'cc-east',
+          kind: 'cc',
+          transport: 'websocket',
+          websocketUrl: 'ws://cc-east.example.com:4000',
+        },
+      ],
+    },
+  );
+});
+
+test('accepts legacy provider configs by treating provider as both id and kind', () => {
+  assert.deepEqual(
+    normalizeProjectConfig({
+      projectInstanceId: 'project-a',
+      cwd: '/repo/a',
+      providers: [
+        {
+          provider: 'cc',
+          transport: 'stdio',
+        },
+      ],
+    }),
+    {
+      projectInstanceId: 'project-a',
+      cwd: '/repo/a',
+      providers: [
+        {
+          id: 'cc',
+          kind: 'cc',
+          transport: 'stdio',
+        },
+      ],
     },
   );
 });
@@ -240,10 +294,10 @@ test('keeps valid projects from a mixed projects file and skips malformed entrie
       websocketUrl: 'ws://127.0.0.1:4000',
       adapterType: 'codex',
       providers: [
-        { provider: 'codex', transport: 'stdio' },
-        { provider: 'cc', transport: 'stdio' },
-        { provider: 'qwen', transport: 'stdio' },
-        { provider: 'gemini', transport: 'stdio' },
+        { id: 'codex', kind: 'codex', transport: 'stdio' },
+        { id: 'cc', kind: 'cc', transport: 'stdio' },
+        { id: 'qwen', kind: 'qwen', transport: 'stdio' },
+        { id: 'gemini', kind: 'gemini', transport: 'stdio' },
       ],
     },
   ]);
@@ -284,10 +338,10 @@ test('loads stdio project configs from projects file shape', () => {
       websocketUrl: 'ws://127.0.0.1:4000',
       adapterType: 'codex',
       providers: [
-        { provider: 'codex', transport: 'stdio' },
-        { provider: 'cc', transport: 'stdio' },
-        { provider: 'qwen', transport: 'stdio' },
-        { provider: 'gemini', transport: 'stdio' },
+        { id: 'codex', kind: 'codex', transport: 'stdio' },
+        { id: 'cc', kind: 'cc', transport: 'stdio' },
+        { id: 'qwen', kind: 'qwen', transport: 'stdio' },
+        { id: 'gemini', kind: 'gemini', transport: 'stdio' },
       ],
     },
   ]);
@@ -309,10 +363,10 @@ test('writes projects file snapshots in the same shape they are read from', () =
       transport: 'websocket',
       websocketUrl: 'ws://127.0.0.1:4000',
       providers: [
-        { provider: 'codex', transport: 'stdio' },
-        { provider: 'cc', transport: 'stdio' },
-        { provider: 'qwen', transport: 'stdio' },
-        { provider: 'gemini', transport: 'stdio' },
+        { id: 'codex', kind: 'codex', transport: 'stdio' },
+        { id: 'cc', kind: 'cc', transport: 'stdio' },
+        { id: 'qwen', kind: 'qwen', transport: 'stdio' },
+        { id: 'gemini', kind: 'gemini', transport: 'stdio' },
       ],
     },
   ]);
@@ -330,10 +384,10 @@ test('writes projects file snapshots in the same shape they are read from', () =
           transport: 'websocket',
           websocketUrl: 'ws://127.0.0.1:4000',
           providers: [
-            { provider: 'codex', transport: 'stdio' },
-            { provider: 'cc', transport: 'stdio' },
-            { provider: 'qwen', transport: 'stdio' },
-            { provider: 'gemini', transport: 'stdio' },
+            { id: 'codex', kind: 'codex', transport: 'stdio' },
+            { id: 'cc', kind: 'cc', transport: 'stdio' },
+            { id: 'qwen', kind: 'qwen', transport: 'stdio' },
+            { id: 'gemini', kind: 'gemini', transport: 'stdio' },
           ],
         },
       ],
@@ -364,10 +418,10 @@ test('preserves the original cwd text when rewriting loaded projects', () => {
               transport: 'websocket',
               websocketUrl: 'ws://127.0.0.1:4000',
               providers: [
-                { provider: 'codex', transport: 'stdio' },
-                { provider: 'cc', transport: 'stdio' },
-                { provider: 'qwen', transport: 'stdio' },
-                { provider: 'gemini', transport: 'stdio' },
+                { id: 'codex', kind: 'codex', transport: 'stdio' },
+                { id: 'cc', kind: 'cc', transport: 'stdio' },
+                { id: 'qwen', kind: 'qwen', transport: 'stdio' },
+                { id: 'gemini', kind: 'gemini', transport: 'stdio' },
               ],
             },
           ],
@@ -391,10 +445,10 @@ test('preserves the original cwd text when rewriting loaded projects', () => {
         websocketUrl: 'ws://127.0.0.1:4000',
         adapterType: 'codex',
         providers: [
-          { provider: 'codex', transport: 'stdio' },
-          { provider: 'cc', transport: 'stdio' },
-          { provider: 'qwen', transport: 'stdio' },
-          { provider: 'gemini', transport: 'stdio' },
+          { id: 'codex', kind: 'codex', transport: 'stdio' },
+          { id: 'cc', kind: 'cc', transport: 'stdio' },
+          { id: 'qwen', kind: 'qwen', transport: 'stdio' },
+          { id: 'gemini', kind: 'gemini', transport: 'stdio' },
         ],
       },
     ]);
@@ -419,10 +473,10 @@ test('preserves the original cwd text when rewriting loaded projects', () => {
             websocketUrl: 'ws://127.0.0.1:4000',
             adapterType: 'codex',
             providers: [
-              { provider: 'codex', transport: 'stdio' },
-              { provider: 'cc', transport: 'stdio' },
-              { provider: 'qwen', transport: 'stdio' },
-              { provider: 'gemini', transport: 'stdio' },
+              { id: 'codex', kind: 'codex', transport: 'stdio' },
+              { id: 'cc', kind: 'cc', transport: 'stdio' },
+              { id: 'qwen', kind: 'qwen', transport: 'stdio' },
+              { id: 'gemini', kind: 'gemini', transport: 'stdio' },
             ],
           },
         ],
@@ -473,12 +527,12 @@ test('keeps the last valid projects snapshot when reload encounters invalid json
       transport: 'websocket' as const,
       websocketUrl: 'ws://127.0.0.1:4000',
       adapterType: 'codex' as const,
-            providers: [
-              { provider: 'codex', transport: 'stdio' },
-              { provider: 'cc', transport: 'stdio' },
-              { provider: 'qwen', transport: 'stdio' },
-              { provider: 'gemini', transport: 'stdio' },
-            ],
+      providers: [
+        { id: 'codex', kind: 'codex', transport: 'stdio' },
+        { id: 'cc', kind: 'cc', transport: 'stdio' },
+        { id: 'qwen', kind: 'qwen', transport: 'stdio' },
+        { id: 'gemini', kind: 'gemini', transport: 'stdio' },
+      ],
     },
   ];
 

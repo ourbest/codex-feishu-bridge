@@ -1,40 +1,49 @@
-export type ProviderName = 'codex' | 'cc' | 'qwen' | 'gemini';
+export type ProviderKind = 'codex' | 'cc' | 'qwen' | 'gemini';
 export type ProviderTransport = 'stdio' | 'websocket';
 
-export const DEFAULT_PROVIDER_ORDER: ProviderName[] = ['codex', 'cc', 'qwen', 'gemini'];
+export const DEFAULT_PROVIDER_ORDER: ProviderKind[] = ['codex', 'cc', 'qwen', 'gemini'];
 
 export interface ProviderDescriptor {
-  provider: ProviderName;
+  id: string;
+  kind: ProviderKind;
   transport: ProviderTransport;
   port?: number;
+  websocketUrl?: string;
+  sshHost?: string;
+  sshPort?: number;
+  sshUser?: string;
+  sshIdentityFile?: string;
+  sshCommand?: string;
+  sshArgs?: string[];
 }
 
 export interface ProviderState {
-  provider: ProviderName;
+  id: string;
+  kind: ProviderKind;
   transport: ProviderTransport;
   active: boolean;
   started: boolean;
   port?: number;
 }
 
-export function isProviderName(value: string): value is ProviderName {
+export function isProviderKind(value: string): value is ProviderKind {
   return value === 'codex' || value === 'cc' || value === 'qwen' || value === 'gemini';
 }
 
 export function defaultProviderDescriptors(): ProviderDescriptor[] {
-  return DEFAULT_PROVIDER_ORDER.map((provider) => ({ provider, transport: 'stdio' }));
+  return DEFAULT_PROVIDER_ORDER.map((kind) => ({ id: kind, kind, transport: 'stdio' }));
 }
 
-export function providerToAdapterType(provider: ProviderName): 'codex' | 'claude-code' | 'qwen-code' | 'gemini-cli' {
-  if (provider === 'codex') {
+export function providerToAdapterType(kind: ProviderKind): 'codex' | 'claude-code' | 'qwen-code' | 'gemini-cli' {
+  if (kind === 'codex') {
     return 'codex';
   }
 
-  if (provider === 'cc') {
+  if (kind === 'cc') {
     return 'claude-code';
   }
 
-  if (provider === 'gemini') {
+  if (kind === 'gemini') {
     return 'gemini-cli';
   }
 
