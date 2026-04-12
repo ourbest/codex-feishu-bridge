@@ -1,11 +1,81 @@
 import { buffer } from 'node:stream/consumers';
 import { Readable } from 'node:stream';
+import { inspect } from 'node:util';
 import type { Client } from '@larksuiteoapi/node-sdk';
 
 /** 允许下载的最大文件大小（50MB） */
 const MAX_FILE_SIZE = 50 * 1024 * 1024;
 /** 下载超时时间（60秒） */
 const DOWNLOAD_TIMEOUT_MS = 60_000;
+
+function serializeDiagnosticValue(value: unknown): string {
+  if (value === undefined) {
+    return 'undefined';
+  }
+
+  if (value === null) {
+    return 'null';
+  }
+
+  if (typeof value === 'string') {
+    return value;
+  }
+
+  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
+    return String(value);
+  }
+
+  if (value instanceof Error) {
+    return value.stack ?? value.message;
+  }
+
+  return inspect(value, {
+    depth: 6,
+    breakLength: 120,
+    compact: true,
+    sorted: true,
+  });
+}
+
+function formatDownloadErrorDetails(error: unknown): string {
+  const parts: string[] = [];
+  const record = error as Record<string, unknown> | null;
+  if (record !== null && typeof record === 'object') {
+    const status = record.status ?? record.statusCode ?? record.responseStatus;
+    if (status !== undefined) {
+      parts.push(`status=${serializeDiagnosticValue(status)}`);
+    }
+
+    const code = record.code ?? record.errorCode;
+    if (code !== undefined) {
+      parts.push(`code=${serializeDiagnosticValue(code)}`);
+    }
+
+    const response = record.response as Record<string, unknown> | undefined;
+    if (response !== undefined) {
+      const responseStatus = response.status ?? response.statusCode;
+      if (responseStatus !== undefined) {
+        parts.push(`response.status=${serializeDiagnosticValue(responseStatus)}`);
+      }
+
+      const responseData = response.data ?? response.body;
+      if (responseData !== undefined) {
+        parts.push(`response.data=${serializeDiagnosticValue(responseData)}`);
+      }
+    }
+  }
+
+  const request = record?.request as Record<string, unknown> | undefined;
+  if (request !== undefined) {
+    const method = request.method;
+    const url = request.url ?? request.path;
+    if (method !== undefined || url !== undefined) {
+      parts.push(`request=${[method, url].filter((part) => part !== undefined).map((part) => serializeDiagnosticValue(part)).join(' ')}`);
+    }
+  }
+
+  return parts.length > 0 ? parts.join(' | ') : 'no extra error details';
+}
 
 export interface DownloadedFile {
   /** 文件二进制数据 */
@@ -30,9 +100,10 @@ export async function downloadFeishuFile(
   client: Client,
   messageId: string,
   fileKey: string,
-  type: 'image' | 'file' = 'file',
+  type: 'image' | 'file' | 'audio' = 'file',
 ): Promise<DownloadedFile> {
-  const urlPath = `/open-apis/im/v1/messages/${messageId}/resources/${fileKey}?type=${type}`;
+  const requestType = type === 'audio' ? 'file' : type;
+  const urlPath = `/open-apis/im/v1/messages/${messageId}/resources/${fileKey}?type=${requestType}`;
 
   console.log(`[file-downloader] downloading ${type}: messageId=${messageId}, fileKey=${fileKey}, url=${urlPath}`);
 
@@ -40,7 +111,7 @@ export async function downloadFeishuFile(
     // 统一使用 messageResource.get，type 参数指明资源类型（image 或 file）
     const result = await client.im.v1.messageResource.get({
       path: { message_id: messageId, file_key: fileKey },
-      params: { type },
+      params: { type: requestType },
     });
 
     console.log(`[file-downloader] API call succeeded, reading stream...`);
@@ -101,6 +172,9 @@ export async function downloadFeishuFile(
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    console.error(
+      `[file-downloader] failed: type=${type} messageId=${messageId} fileKey=${fileKey} url=${urlPath} ${formatDownloadErrorDetails(error)}`,
+    );
     throw new Error(`Failed to download Feishu ${type} (url=${urlPath}): ${message}`);
   }
 }
@@ -109,7 +183,7 @@ export async function downloadFeishuFile(
  * 创建文件下载函数的工厂函数
  */
 export function createFileDownloadHandler(client: Client) {
-  return async (opts: { messageId: string; fileKey: string; type: 'image' | 'file' }) => {
+  return async (opts: { messageId: string; fileKey: string; type: 'image' | 'file' | 'audio' }) => {
     return await downloadFeishuFile(client, opts.messageId, opts.fileKey, opts.type);
   };
 }

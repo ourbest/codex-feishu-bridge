@@ -29,9 +29,11 @@ import { createFeishuWebSocketTransport } from './adapters/lark/feishu-websocket
 import { buildStartupNotificationCard } from './adapters/lark/cards.ts';
 import { JsonBindingStore } from './storage/json-binding-store.ts';
 import { createApprovalService } from './runtime/approval-service.ts';
+import { resolveFunasrRuntimeConfig } from './runtime/funasr-config.ts';
 import { LarkChatInfoService } from './services/lark-chat-info-service.ts';
 import { defaultHttpInstance, LoggerLevel, WSClient, EventDispatcher, Client } from '@larksuiteoapi/node-sdk';
 import { createFileDownloadHandler } from './adapters/lark/file-downloader.ts';
+import { createFunasrTranscriptionService } from './services/funasr-transcription-service.ts';
 
 /**
  * Extract a human-readable command string from Claude Code request params.
@@ -247,6 +249,7 @@ export async function run(): Promise<void> {
   const consoleRuntime = resolveConsoleRuntimeConfig();
   const codexRuntimes = resolveCodexRuntimeConfigs() ?? [];
   const feishuRuntime = resolveFeishuRuntimeConfig();
+  const funasrRuntime = resolveFunasrRuntimeConfig();
   const approvalService = createApprovalService();
   const bridgeStore = new JsonBindingStore(storagePath);
   let projectRegistryImpl: ReturnType<typeof createProjectRegistry> | null = null;
@@ -272,6 +275,9 @@ export async function run(): Promise<void> {
       }), sendToOpenId: null, sendCardToOpenId: null, downloadFile: null, restClient: null };
   const { transport, sendToOpenId, sendCardToOpenId, downloadFile, restClient } = transportBundle;
   const larkChatInfoService = restClient === null ? undefined : new LarkChatInfoService(restClient);
+  const funasrTranscriber = funasrRuntime === null
+    ? undefined
+    : createFunasrTranscriptionService(funasrRuntime);
 
   app = createBridgeApp({
     config,
@@ -280,6 +286,12 @@ export async function run(): Promise<void> {
     larkChatInfoService,
     approvalService,
     downloadFile: downloadFile ?? undefined,
+    transcribeAudio: funasrTranscriber === undefined
+      ? undefined
+      : async (input) => await funasrTranscriber.transcribeAudioFile({
+          filePath: input.filePath,
+          fileName: input.fileName,
+        }),
     onRestartRequested: async ({ sessionId, senderId }) => {
       if (restartInFlight) {
         await app?.larkAdapter.send({

@@ -205,7 +205,7 @@ test('builds a processing bridge status card', () => {
   const card = JSON.parse(
     buildBridgeStatusCard({
       projectTitle: 'cms-fe',
-      statusLabel: 'Processing',
+      statusLabel: '处理中',
       bodyMarkdown: 'Handling `hello`.',
       footerItems: [{ label: 'Transport', value: 'websocket' }],
       template: 'blue',
@@ -216,7 +216,7 @@ test('builds a processing bridge status card', () => {
   };
 
   assert.equal(card.header?.title?.content, 'cms-fe');
-  assert.equal(card.header?.subtitle?.content, 'Processing');
+  assert.equal(card.header?.subtitle?.content, '处理中');
   assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('Handling `hello`')));
   assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('Transport: websocket')));
 });
@@ -253,10 +253,10 @@ test('renders help cards with consistent markdown heading levels', () => {
   };
 
   const bodyText = JSON.stringify(card.body?.elements ?? []);
-  assert.match(bodyText, /## Bridge commands/);
-  assert.match(bodyText, /## Codex commands/);
-  assert.doesNotMatch(bodyText, /### Bridge commands/);
-  assert.doesNotMatch(bodyText, /### Codex commands/);
+  assert.match(bodyText, /## 桥接命令/);
+  assert.match(bodyText, /## Codex 命令/);
+  assert.doesNotMatch(bodyText, /## Bridge commands/);
+  assert.doesNotMatch(bodyText, /## Codex commands/);
 });
 
 test('builds an unavailable-project card with detailed diagnostics', () => {
@@ -277,7 +277,7 @@ test('builds an unavailable-project card with detailed diagnostics', () => {
   };
 
   assert.equal(card.header?.title?.content, 'cms-fe');
-  assert.equal(card.header?.subtitle?.content, 'Unavailable');
+  assert.equal(card.header?.subtitle?.content, '不可用');
   assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('Reconnecting... 2/5')));
   assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('Transport: websocket')));
 });

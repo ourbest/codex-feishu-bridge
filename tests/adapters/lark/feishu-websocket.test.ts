@@ -129,6 +129,51 @@ test('normalizes image message event to LarkEventPayload with attachment', async
   assert.equal(receivedEvents[0].attachments?.[0].attachmentType, 'image');
 });
 
+test('normalizes audio message event to LarkEventPayload with audio attachment', async () => {
+  registeredHandlers = {};
+  const receivedEvents: LarkEventPayload[] = [];
+
+  const transport = createFeishuWebSocketTransport({
+    appId: 'cli_test',
+    appSecret: 'secret',
+    wsClient: mockWsClient as never,
+    eventDispatcher: mockEventDispatcher as never,
+    sendMessageFn: mockSendMessage as never,
+    sendReactionFn: mockSendReaction as never,
+  });
+
+  transport.onEvent((event) => {
+    receivedEvents.push(event);
+  });
+
+  await transport.start();
+
+  const content = JSON.stringify({ file_key: 'aud_abc123', file_name: 'voice.opus' });
+  await registeredHandlers['im.message.receive_v1']({
+    sender: {
+      sender_id: { open_id: 'user_xyz' },
+    },
+    message: {
+      message_id: 'msg_audio_1',
+      chat_id: 'chat_abc',
+      content,
+      create_time: '2026-04-10T00:00:00.000Z',
+      message_type: 'audio',
+    },
+  });
+
+  assert.equal(receivedEvents.length, 1);
+  assert.equal(receivedEvents[0].sessionId, 'chat_abc');
+  assert.equal(receivedEvents[0].messageId, 'msg_audio_1');
+  assert.equal(receivedEvents[0].text, '');
+  assert.equal(receivedEvents[0].senderId, 'user_xyz');
+  assert.equal(receivedEvents[0].timestamp, '2026-04-10T00:00:00.000Z');
+  assert.equal(receivedEvents[0].attachments?.length, 1);
+  assert.equal(receivedEvents[0].attachments?.[0].fileKey, 'aud_abc123');
+  assert.equal(receivedEvents[0].attachments?.[0].fileName, 'voice.opus');
+  assert.equal(receivedEvents[0].attachments?.[0].attachmentType, 'audio');
+});
+
 test('sends message via sendMessageFn with chat_id as receive_id', async () => {
   registeredHandlers = {};
   let sentTo: string | null = null;

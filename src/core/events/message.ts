@@ -10,7 +10,7 @@ export interface InboundAttachment {
   /** 下载后的本地路径 */
   localPath?: string;
   /** 附件类型 */
-  attachmentType?: 'image' | 'file';
+  attachmentType?: 'image' | 'file' | 'audio';
 }
 
 export interface InboundMessage {

@@ -467,12 +467,12 @@ export function buildHelpCard(input: {
   codexCommands: Array<{ command: string; description: string }>;
 }): FeishuInteractiveCardMessage {
   const bridgeMarkdown = [
-    '## Bridge commands',
+    '## 桥接命令',
     ...input.bridgeCommands.map((item) => `- \`${item.command}\`  \n  ${item.description}`),
   ].join('\n');
 
   const codexMarkdown = [
-    '## Codex commands',
+    '## Codex 命令',
     ...input.codexCommands.map((item) => `- \`${item.command}\`  \n  ${item.description}`),
   ].join('\n');
 
@@ -513,21 +513,21 @@ export function buildUnboundCard(input: {
   codexCommands: Array<{ command: string; description: string }>;
 }): FeishuInteractiveCardMessage {
   const guidanceMarkdown = [
-    'This chat is **not bound** to a Codex project yet.',
+    '当前聊天**尚未绑定**到 Codex 项目。',
     '',
     `- Chat: \`${input.sessionId}\``,
     `- Sender: \`${input.senderId}\``,
     '',
-    'Bind a project first, then send normal messages to talk to Codex.',
+    '先绑定项目，再发送普通消息和 Codex 对话。',
   ].join('\n');
 
   const bridgeMarkdown = [
-    '### Bridge commands',
+    '### 桥接命令',
     ...input.bridgeCommands.map((item) => `- \`${item.command}\`  \n  ${item.description}`),
   ].join('\n');
 
   const codexMarkdown = [
-    '### Codex commands',
+    '### Codex 命令',
     ...input.codexCommands.map((item) => `- \`${item.command}\`  \n  ${item.description}`),
   ].join('\n');
 
@@ -541,7 +541,7 @@ export function buildUnboundCard(input: {
     header: {
       template: 'grey',
       title: plainText('lark-agent-bridge'),
-      subtitle: plainText('Bind a project to get started'),
+      subtitle: plainText('绑定项目后开始使用'),
     },
     body: {
       elements: [
@@ -575,7 +575,7 @@ export function buildUnavailableProjectCard(input: {
 }): FeishuInteractiveCardMessage {
   return buildBridgeStatusCard({
     projectTitle: input.projectId,
-    statusLabel: 'Unavailable',
+    statusLabel: '不可用',
     bodyMarkdown: buildCodeBlockMarkdown(input.lines),
     footerItems: input.footerItems,
     template: 'red',

@@ -141,7 +141,7 @@ test('boots the bridge runtime and forwards a routed reply back to lark', async 
     body?: { elements?: Array<{ tag?: string; content?: string }> };
   };
   assert.equal(processingCard.header?.title?.content, 'project-a');
-  assert.equal(processingCard.header?.subtitle?.content, 'Processing');
+  assert.equal(processingCard.header?.subtitle?.content, '处理中');
   assert.ok(processingCard.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('hello')));
 
   const card = JSON.parse(sentCards[1]?.card.content ?? '{}') as {
@@ -160,6 +160,113 @@ test('boots the bridge runtime and forwards a routed reply back to lark', async 
 
   await app.stop();
   assert.equal(app.ready, false);
+});
+
+test('transcribes audio attachments before routing the message to the project handler', async () => {
+  const sentMessages: Array<{ sessionId: string; text: string }> = [];
+  const sentCards: Array<{ sessionId: string; card: { msg_type: 'interactive'; content: string } }> = [];
+  let eventHandler: ((event: LarkEventPayload) => Promise<void> | void) | null = null;
+  const projectRoot = mkdtempSync(join(tmpdir(), 'lark-audio-'));
+
+  const transport = {
+    onEvent(handler) {
+      eventHandler = handler;
+    },
+    async sendMessage(message) {
+      sentMessages.push(message);
+    },
+    async sendCard(message) {
+      sentCards.push(message);
+      return { messageId: `card-${sentCards.length}` };
+    },
+    async updateCard() {
+      return undefined;
+    },
+    async sendReaction() {
+      return undefined;
+    },
+  } as LarkTransport;
+
+  const app = createBridgeApp({
+    config: loadConfig({}),
+    larkTransport: transport,
+    downloadFile: async () => ({
+      buffer: Buffer.from('audio-bytes'),
+      fileName: 'voice.opus',
+      mimeType: 'audio/opus',
+      fileSize: 11,
+    }),
+    transcribeAudio: async ({ fileName }) => {
+      assert.equal(fileName, 'voice.opus');
+      return '你好，FunASR';
+    },
+    projectRegistry: {
+      async describeProject(projectInstanceId) {
+        return {
+          projectInstanceId,
+          configured: false,
+          active: false,
+          removed: false,
+          sessionCount: 0,
+        };
+      },
+      async getActiveProvider(projectInstanceId) {
+        return projectInstanceId === 'project-a' ? 'codex' : null;
+      },
+      getProjectConfig(projectInstanceId) {
+        return projectInstanceId === 'project-a'
+          ? {
+              projectInstanceId,
+              cwd: projectRoot,
+              transport: 'stdio',
+              activeProvider: 'codex',
+            }
+          : null;
+      },
+    },
+  });
+
+  app.router.registerProjectHandler('project-a', async ({ message }) => ({
+    text: `reply:${message.text}`,
+  }));
+
+  await app.bindingService.bindProjectToSession('project-a', 'session-a');
+  await app.start();
+  assert.ok(eventHandler);
+
+  await eventHandler!({
+    sessionId: 'session-a',
+    messageId: 'message-audio-1',
+    text: '',
+    senderId: 'user-a',
+    timestamp: '2026-04-11T00:00:00.000Z',
+    attachments: [
+      {
+        fileKey: 'aud_123',
+        fileName: 'voice.opus',
+        mimeType: 'audio/opus',
+        fileSize: 11,
+        attachmentType: 'audio',
+      },
+    ],
+  });
+
+  assert.equal(sentCards.length, 2);
+  const transcribingCard = JSON.parse(sentCards[0]?.card.content ?? '{}') as {
+    header?: { title?: { content?: string }; subtitle?: { content?: string } };
+    body?: { elements?: Array<{ tag?: string; content?: string }> };
+  };
+  assert.equal(transcribingCard.header?.title?.content, 'project-a');
+  assert.equal(transcribingCard.header?.subtitle?.content, '语音转写中');
+  assert.ok(transcribingCard.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('正在转写语音附件：')));
+  const finalCard = JSON.parse(sentCards[1]?.card.content ?? '{}') as {
+    body?: { elements?: Array<{ tag?: string; content?: string }> };
+  };
+  assert.ok(finalCard.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('reply:你好，FunASR')));
+  assert.deepEqual(sentMessages, []);
+
+  await app.stop();
+  rmSync(projectRoot, { recursive: true, force: true });
 });
 
 test('replaces empty project replies with a visible placeholder card', async () => {
@@ -241,8 +348,8 @@ test('replaces empty project replies with a visible placeholder card', async () 
     const replyCard = JSON.parse(sentCards[1]?.card.content ?? '{}') as {
       body?: { elements?: Array<{ tag?: string; content?: string }> };
     };
-    assert.match(sentCards[1]?.fallbackText ?? '', /\[lark-agent-bridge\] empty reply from project-a/);
-    assert.match(replyCard.body?.elements?.[0]?.content ?? '', /\[lark-agent-bridge\] empty reply from project-a/);
+    assert.match(sentCards[1]?.fallbackText ?? '', /\[lark-agent-bridge\] project-a 返回空回复/);
+    assert.match(replyCard.body?.elements?.[0]?.content ?? '', /\[lark-agent-bridge\] project-a 返回空回复/);
     assert.ok(warnings.some((line) =>
       line.includes('[lark-agent-bridge] empty reply fallback:')
       && line.includes('project=project-a')
@@ -628,14 +735,14 @@ test('updates the same status card for waiting approval and reconnecting while a
     header?: { subtitle?: { content?: string } };
     body?: { elements?: Array<{ tag?: string; content?: string }> };
   };
-  assert.equal(waitingCard.header?.subtitle?.content, 'Waiting Approval');
+  assert.equal(waitingCard.header?.subtitle?.content, '等待审批');
   assert.ok(waitingCard.body?.elements?.some((element) => String(element.content).includes('Approval required')));
 
   const reconnectingCard = JSON.parse(updatedCards[1]?.card.content ?? '{}') as {
     header?: { subtitle?: { content?: string } };
     body?: { elements?: Array<{ tag?: string; content?: string }> };
   };
-  assert.equal(reconnectingCard.header?.subtitle?.content, 'Reconnecting');
+  assert.equal(reconnectingCard.header?.subtitle?.content, '重连中');
   assert.ok(reconnectingCard.body?.elements?.some((element) => String(element.content).includes('Reconnecting... 2/5')));
 
   const completedCard = JSON.parse(sentCards.at(-1)?.card.content ?? '{}') as {
@@ -735,10 +842,11 @@ test('updates the in-flight status card with streamed reply text and activity su
     header?: { subtitle?: { content?: string } };
     body?: { elements?: Array<{ tag?: string; content?: string }> };
   };
-  assert.equal(progressCard.header?.subtitle?.content, 'Processing');
+  assert.equal(progressCard.header?.subtitle?.content, '处理中');
+  assert.ok(progressCard.body?.elements?.some((element) => String(element.content).includes('正在处理消息：')));
   assert.ok(progressCard.body?.elements?.some((element) => String(element.content).includes('Running command: npm test')));
-  assert.ok(progressCard.body?.elements?.some((element) => String(element.content).includes('reply so far')));
-  assert.match(updatedCards[1]?.fallbackText ?? '', /reply so far/);
+  assert.ok(progressCard.body?.elements?.some((element) => String(element.content).includes('当前回复：')));
+  assert.match(updatedCards[1]?.fallbackText ?? '', /当前回复/);
 
   const completedCard = JSON.parse(sentCards.at(-1)?.card.content ?? '{}') as {
     header?: { subtitle?: { content?: string } };
@@ -833,7 +941,7 @@ test('keeps streamed reply text visible when a done status update finalizes the 
     header?: { subtitle?: { content?: string } };
     body?: { elements?: Array<{ tag?: string; content?: string }> };
   };
-  assert.equal(completedCard.header?.subtitle?.content, 'Completed');
+  assert.equal(completedCard.header?.subtitle?.content, '已完成');
   assert.ok(completedCard.body?.elements?.some((element) => String(element.content).includes('final reply')));
   assert.ok(!completedCard.body?.elements?.some((element) => String(element.content).includes('Reply delivered below.')));
 
@@ -1503,8 +1611,8 @@ test('renders //help as an interactive card for easier reading', async () => {
     body?: { elements?: Array<{ tag?: string; content?: string }> };
   };
   assert.equal(card.header?.title?.content, 'lark-agent-bridge help');
-  assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('## Bridge commands')));
-  assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('## Codex commands')));
+  assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('## 桥接命令')));
+  assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('## Codex 命令')));
   assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('//bind')));
   assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('//projects')));
   assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('//providers')));
@@ -1578,7 +1686,7 @@ test('renders unbound guidance as an interactive card', async () => {
     body?: { elements?: Array<{ tag?: string; content?: string }> };
   };
   assert.equal(card.header?.title?.content, 'lark-agent-bridge');
-  assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('not bound')));
+  assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('尚未绑定')));
   assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('//bind <projectId>')));
   assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('//projects')));
   assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('//providers')));
@@ -2020,10 +2128,14 @@ test('self-heals a missing bound project handler once before replying with failu
   ]);
   assert.deepEqual(sentMessages, []);
   assert.equal(sentCards.length, 2);
-  assert.match(sentCards[0]?.fallbackText ?? '', /processing request/i);
+  assert.match(sentCards[0]?.fallbackText ?? '', /正在处理 project-a/);
   assert.match(sentCards[1]?.fallbackText ?? '', /reply:hello/);
 
-  await app.stop();
+  try {
+    await app.stop();
+  } catch (error) {
+    throw error;
+  }
 });
 
 test('handles //reload projects by reloading a real projects file and reconciling state', async () => {

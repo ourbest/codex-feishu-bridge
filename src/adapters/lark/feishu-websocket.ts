@@ -145,6 +145,22 @@ export function createFeishuWebSocketTransport(options: FeishuWebSocketTransport
             } else {
               console.warn(`[feishu] file message missing file_key: ${JSON.stringify(parsed)}`);
             }
+          } else if (msgType === 'audio') {
+            // 语音消息
+            const fileKey = parsed.file_key;
+            const fileName = parsed.file_name ?? 'voice.opus';
+            if (fileKey) {
+              attachments = [{
+                fileKey,
+                fileName,
+                mimeType: parsed.mime_type ?? 'audio/opus',
+                fileSize: parsed.file_size ?? 0,
+                attachmentType: 'audio',
+              }];
+              console.log(`[feishu] audio message: fileKey=${fileKey}, fileName=${fileName}`);
+            } else {
+              console.warn(`[feishu] audio message missing file_key: ${JSON.stringify(parsed)}`);
+            }
           } else if (msgType === 'image') {
             // 图片消息
             const imageKey = parsed.image_key;

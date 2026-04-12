@@ -17,7 +17,7 @@ export interface FileUploadResult {
     originalName: string;
     savedPath: string;
     fileSize: number;
-    attachmentType: 'image' | 'file';
+    attachmentType: 'image' | 'file' | 'audio';
   }>;
   /** 下载失败的附件错误信息 */
   errors: Array<{

@@ -257,15 +257,15 @@ function buildProjectFooterItems(
 }
 
 function buildProcessingStatusFallback(projectId: string, text: string): string {
-  return `[lark-agent-bridge] processing request for ${projectId}\n${text}`;
+  return `[lark-agent-bridge] 正在处理 ${projectId}\n${text}`;
 }
 
 function buildCompletionStatusFallback(projectId: string): string {
-  return `[lark-agent-bridge] completed request for ${projectId}`;
+  return `[lark-agent-bridge] 已完成 ${projectId}`;
 }
 
 function buildEmptyReplyFallback(projectTitle: string): string {
-  return `[lark-agent-bridge] empty reply from ${projectTitle}`;
+  return `[lark-agent-bridge] ${projectTitle} 返回空回复`;
 }
 
 function logEmptyReplyFallback(input: {
@@ -307,15 +307,15 @@ function buildInFlightStatusMarkdown(input: {
   latestSummary?: string | null;
 }): string {
   const sections = [
-    `Handling message:\n\n\`\`\`text\n${sanitizeCodeFence(input.requestText)}\n\`\`\``,
+    `正在处理消息：\n\n\`\`\`text\n${sanitizeCodeFence(input.requestText)}\n\`\`\``,
   ];
 
   if (input.latestSummary?.trim()) {
-    sections.push(`Latest activity:\n\n\`\`\`text\n${sanitizeCodeFence(input.latestSummary)}\n\`\`\``);
+    sections.push(`最新进展：\n\n\`\`\`text\n${sanitizeCodeFence(input.latestSummary)}\n\`\`\``);
   }
 
   if (input.streamedReply.trim() !== '') {
-    sections.push(`Reply so far:\n\n\`\`\`text\n${sanitizeCodeFence(input.streamedReply)}\n\`\`\``);
+    sections.push(`当前回复：\n\n\`\`\`text\n${sanitizeCodeFence(input.streamedReply)}\n\`\`\``);
   }
 
   return sections.join('\n\n');
@@ -332,12 +332,12 @@ function buildRealtimeStatusPresentation(input: {
     return {
       card: buildBridgeStatusCard({
         projectTitle: input.projectTitle,
-        statusLabel: 'Waiting Approval',
-        bodyMarkdown: input.reason?.trim() ? input.reason : 'Approval is required before Codex can continue.',
+        statusLabel: '等待审批',
+        bodyMarkdown: input.reason?.trim() ? input.reason : '需要审批后才能继续。',
         footerItems: input.footerItems,
         template: 'yellow',
       }),
-      fallbackText: `[lark-agent-bridge] waiting approval for ${input.projectTitle}${input.reason?.trim() ? `\n${input.reason}` : ''}`,
+      fallbackText: `[lark-agent-bridge] ${input.projectTitle} 等待审批${input.reason?.trim() ? `\n${input.reason}` : ''}`,
     };
   }
 
@@ -345,21 +345,21 @@ function buildRealtimeStatusPresentation(input: {
     return {
       card: buildBridgeStatusCard({
         projectTitle: input.projectTitle,
-        statusLabel: 'Reconnecting',
-        bodyMarkdown: input.reason ?? 'Reconnecting to Codex.',
+        statusLabel: '重连中',
+        bodyMarkdown: input.reason ?? '正在重连到 Codex。',
         footerItems: input.footerItems,
         template: 'yellow',
       }),
-      fallbackText: `[lark-agent-bridge] reconnecting ${input.projectTitle}${input.reason?.trim() ? `\n${input.reason}` : ''}`,
+      fallbackText: `[lark-agent-bridge] ${input.projectTitle} 重连中${input.reason?.trim() ? `\n${input.reason}` : ''}`,
     };
   }
 
   if (input.status === 'done') {
-    const completedMarkdown = input.completedMarkdown?.trim() || input.reason?.trim() || 'Reply delivered below.';
+    const completedMarkdown = input.completedMarkdown?.trim() || input.reason?.trim() || '回复已发送如下。';
     return {
       card: buildBridgeStatusCard({
         projectTitle: input.projectTitle,
-        statusLabel: 'Completed',
+        statusLabel: '已完成',
         bodyMarkdown: completedMarkdown,
         footerItems: input.footerItems,
         template: 'green',
@@ -372,24 +372,24 @@ function buildRealtimeStatusPresentation(input: {
     return {
       card: buildBridgeStatusCard({
         projectTitle: input.projectTitle,
-        statusLabel: 'Failed',
-        bodyMarkdown: input.reason?.trim() ? input.reason : 'The request failed.',
+        statusLabel: '失败',
+        bodyMarkdown: input.reason?.trim() ? input.reason : '请求失败。',
         footerItems: input.footerItems,
         template: 'red',
       }),
-      fallbackText: `[lark-agent-bridge] failed request for ${input.projectTitle}${input.reason?.trim() ? `\n${input.reason}` : ''}`,
+      fallbackText: `[lark-agent-bridge] ${input.projectTitle} 请求失败${input.reason?.trim() ? `\n${input.reason}` : ''}`,
     };
   }
 
   return {
     card: buildBridgeStatusCard({
       projectTitle: input.projectTitle,
-      statusLabel: 'Processing',
-      bodyMarkdown: input.reason?.trim() ? input.reason : 'Request in progress.',
+      statusLabel: '处理中',
+      bodyMarkdown: input.reason?.trim() ? input.reason : '请求正在处理中。',
       footerItems: input.footerItems,
       template: 'blue',
     }),
-    fallbackText: `[lark-agent-bridge] processing request for ${input.projectTitle}${input.reason?.trim() ? `\n${input.reason}` : ''}`,
+    fallbackText: `[lark-agent-bridge] ${input.projectTitle} 处理中${input.reason?.trim() ? `\n${input.reason}` : ''}`,
   };
 }
 
@@ -402,7 +402,8 @@ export function createBridgeApp(options: {
   consoleHandler?: MessageHandler;
   onRestartRequested?: (input: { sessionId: string; senderId: string; messageId: string; text: string }) => Promise<void>;
   /** 下载飞书消息附件的函数 */
-  downloadFile?: (opts: { messageId: string; fileKey: string; type: 'image' | 'file' }) => Promise<{ buffer: Buffer; fileName: string; mimeType: string; fileSize: number }>;
+  downloadFile?: (opts: { messageId: string; fileKey: string; type: 'image' | 'file' | 'audio' }) => Promise<{ buffer: Buffer; fileName: string; mimeType: string; fileSize: number }>;
+  transcribeAudio?: (input: { filePath: string; fileName: string; messageId: string; sessionId: string }) => Promise<string>;
   projectRegistry: {
     describeProject(projectInstanceId: string): Promise<ProjectState>;
     getProjectDiagnostics?(projectInstanceId: string): Promise<ProjectDiagnostics | null>;
@@ -475,6 +476,27 @@ export function createBridgeApp(options: {
   });
   const activeStatusCards = new Map<string, ActiveStatusCard>();
 
+  function setActiveStatusCard(input: ActiveStatusCard): void {
+    activeStatusCards.set(input.sessionId, input);
+  }
+
+  function updateActiveStatusCard(sessionId: string, patch: Partial<Pick<ActiveStatusCard, 'requestText' | 'streamedReply' | 'latestSummary'>>): void {
+    const entry = activeStatusCards.get(sessionId);
+    if (entry === undefined) {
+      return;
+    }
+
+    if (patch.requestText !== undefined) {
+      entry.requestText = patch.requestText;
+    }
+    if (patch.streamedReply !== undefined) {
+      entry.streamedReply = patch.streamedReply;
+    }
+    if (patch.latestSummary !== undefined) {
+      entry.latestSummary = patch.latestSummary;
+    }
+  }
+
   async function reportProjectStatus(input: {
     projectId: string;
     sessionId: string;
@@ -495,7 +517,7 @@ export function createBridgeApp(options: {
       ? {
           card: buildBridgeStatusCard({
             projectTitle: entry.projectTitle,
-            statusLabel: 'Processing',
+            statusLabel: '处理中',
             bodyMarkdown: buildInFlightStatusMarkdown({
               requestText: entry.requestText,
               streamedReply: entry.streamedReply,
@@ -904,10 +926,22 @@ export function createBridgeApp(options: {
 
     const boundProjectId = await bindingService.getProjectBySession(message.sessionId);
     const boundProjectConfig = boundProjectId === null ? null : options.projectRegistry.getProjectConfig?.(boundProjectId) ?? null;
+    const statusFooterItems = boundProjectId === null
+      ? []
+      : buildProjectFooterItems(
+          boundProjectId,
+          boundProjectConfig,
+          options.projectRegistry.getActiveProvider === undefined
+            ? boundProjectConfig?.activeProvider ?? null
+            : await options.projectRegistry.getActiveProvider(boundProjectId),
+        );
 
     // 处理文件附件
     let nonImageFiles: FileUploadResult['savedFiles'] = [];
     let attachmentErrors: FileUploadResult['errors'] = [];
+    let statusCardResult: { messageId?: string } | void | null = null;
+    let statusCardMessageId: string | null = null;
+    let audioTranscribingCardSent = false;
     if (message.attachments && message.attachments.length > 0 && boundProjectId !== null && options.downloadFile) {
       const projectConfig = boundProjectConfig;
       if (projectConfig?.cwd) {
@@ -931,9 +965,109 @@ export function createBridgeApp(options: {
           });
 
           attachmentErrors = uploadResult.errors;
-          // 分离图片和非图片文件
-          nonImageFiles = uploadResult.savedFiles.filter(f => f.attachmentType !== 'image');
-          const images = uploadResult.savedFiles.filter(f => f.attachmentType === 'image');
+          const imageFiles = uploadResult.savedFiles.filter(f => f.attachmentType === 'image');
+          const fileFiles = uploadResult.savedFiles.filter(f => f.attachmentType === 'file');
+          const audioFiles = uploadResult.savedFiles.filter(f => f.attachmentType === 'audio');
+          let audioTranscriptFailure = false;
+          let audioTranscriptParts: string[] = [];
+
+          nonImageFiles = fileFiles;
+
+          if (audioFiles.length > 0) {
+            const audioFileNames = audioFiles.map(f => f.originalName).join(', ');
+            statusCardResult = await larkAdapter.sendCard({
+              targetSessionId: message.sessionId,
+            card: buildBridgeStatusCard({
+              projectTitle: boundProjectConfig?.projectInstanceId ?? boundProjectId,
+              statusLabel: '语音转写中',
+              bodyMarkdown: `正在转写语音附件：\n\n${audioFileNames}`,
+              footerItems: statusFooterItems,
+              template: 'blue',
+            }),
+              fallbackText: `[lark-agent-bridge] ${boundProjectId} 语音转写中\n${audioFileNames}`,
+            });
+            statusCardMessageId = statusCardResult?.messageId ?? null;
+            audioTranscribingCardSent = statusCardMessageId !== null;
+
+            if (audioTranscribingCardSent) {
+              setActiveStatusCard({
+                projectId: boundProjectId,
+                sessionId: message.sessionId,
+                projectTitle: boundProjectConfig?.projectInstanceId ?? boundProjectId,
+                footerItems: statusFooterItems,
+                messageId: statusCardMessageId,
+                lastSignature: JSON.stringify({ status: 'working', reason: `Transcribing audio attachment(s): ${audioFileNames}`, source: null }),
+                requestText: message.text,
+                streamedReply: '',
+                latestSummary: `Transcribing audio attachment(s): ${audioFileNames}`,
+              });
+            }
+
+            if (options.transcribeAudio === undefined) {
+              nonImageFiles = [...fileFiles, ...audioFiles];
+              console.log(`[file-upload] skipping audio transcription for project ${boundProjectId}: transcriber not configured`);
+            } else {
+              for (const audioFile of audioFiles) {
+                try {
+                  const transcript = await options.transcribeAudio({
+                    filePath: audioFile.savedPath,
+                    fileName: audioFile.originalName,
+                    messageId: message.messageId,
+                    sessionId: message.sessionId,
+                  });
+                  const trimmedTranscript = transcript.trim();
+                  if (trimmedTranscript !== '') {
+                    audioTranscriptParts.push(trimmedTranscript);
+                    console.log(`[audio-transcribe] transcript ready: project=${boundProjectId} session=${message.sessionId} file=${audioFile.originalName}`);
+                  } else {
+                    audioTranscriptFailure = true;
+                    console.warn(`[audio-transcribe] empty transcript: project=${boundProjectId} session=${message.sessionId} file=${audioFile.originalName}`);
+                  }
+                } catch (error) {
+                  audioTranscriptFailure = true;
+                  const reason = error instanceof Error && error.message !== '' ? error.message : String(error ?? 'unknown error');
+                  console.error(`[audio-transcribe] failed: project=${boundProjectId} session=${message.sessionId} file=${audioFile.originalName} reason="${reason}"`);
+                }
+              }
+
+              if (audioTranscriptParts.length > 0) {
+                const transcriptText = audioTranscriptParts.join('\n');
+                message.text = message.text.trim() === ''
+                  ? transcriptText
+                  : `${message.text}\n\n[语音转写]\n${transcriptText}`;
+                if (audioTranscribingCardSent) {
+                  updateActiveStatusCard(message.sessionId, {
+                    requestText: message.text,
+                    latestSummary: `语音转写完成：${audioFileNames}`,
+                  });
+                  await reportProjectStatus({
+                    projectId: boundProjectId,
+                    sessionId: message.sessionId,
+                    status: 'working',
+                    reason: `语音转写完成：${audioFileNames}`,
+                  });
+                }
+              }
+
+              if (audioTranscriptFailure && audioTranscriptParts.length === 0 && message.text.trim() === '' && fileFiles.length === 0) {
+                if (audioTranscribingCardSent) {
+                  await reportProjectStatus({
+                    projectId: boundProjectId,
+                    sessionId: message.sessionId,
+                    status: 'failed',
+                    reason: '语音转写失败',
+                  });
+                }
+                await larkAdapter.send({
+                  targetSessionId: message.sessionId,
+                  text: '[lark-agent-bridge] 语音转写失败',
+                });
+                return;
+              }
+            }
+          }
+
+          const images = imageFiles;
 
           if (images.length > 0) {
             // 图片：追加到消息文本中转发给 Codex
@@ -993,32 +1127,20 @@ export function createBridgeApp(options: {
       return;
     }
 
-    const statusFooterItems = boundProjectId === null
-      ? []
-      : buildProjectFooterItems(
-          boundProjectId,
-          boundProjectConfig,
-          options.projectRegistry.getActiveProvider === undefined
-            ? boundProjectConfig?.activeProvider ?? null
-            : await options.projectRegistry.getActiveProvider(boundProjectId),
-        );
-    const statusCardResult =
-      boundProjectId === null
-        ? null
-        : await larkAdapter.sendCard({
-            targetSessionId: message.sessionId,
-            card: buildBridgeStatusCard({
+    if (boundProjectId !== null && !audioTranscribingCardSent) {
+      statusCardResult = await larkAdapter.sendCard({
+        targetSessionId: message.sessionId,
+          card: buildBridgeStatusCard({
               projectTitle: boundProjectConfig?.projectInstanceId ?? boundProjectId,
-              statusLabel: 'Processing',
-              bodyMarkdown: `Handling message:\n\n\`\`\`text\n${sanitizeCodeFence(message.text)}\n\`\`\``,
+              statusLabel: '处理中',
+              bodyMarkdown: `正在处理消息：\n\n\`\`\`text\n${sanitizeCodeFence(message.text)}\n\`\`\``,
               footerItems: statusFooterItems,
               template: 'blue',
             }),
-            fallbackText: buildProcessingStatusFallback(boundProjectId, message.text),
-          });
-    const statusCardMessageId = statusCardResult?.messageId ?? null;
-    if (boundProjectId !== null) {
-      activeStatusCards.set(message.sessionId, {
+        fallbackText: buildProcessingStatusFallback(boundProjectId, message.text),
+      });
+      statusCardMessageId = statusCardResult?.messageId ?? null;
+      setActiveStatusCard({
         projectId: boundProjectId,
         sessionId: message.sessionId,
         projectTitle: boundProjectConfig?.projectInstanceId ?? boundProjectId,
