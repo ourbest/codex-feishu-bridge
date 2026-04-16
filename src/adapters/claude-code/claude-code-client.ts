@@ -12,6 +12,7 @@ export interface ClaudeCodeClientOptions {
   onNotification?: ((message: { method: string; params?: Record<string, unknown> }) => void | Promise<void>) | null;
   onServerRequest?: ((request: CodexServerRequest) => void | Promise<void>) | null;
   onThreadChanged?: ((threadId: string) => void) | null;
+onSystemInit?: (data: { model: string; sessionId: string; cwd: string; permissionMode: string }) => void;
 }
 
 interface ClaudeCodeMessage {
@@ -65,6 +66,7 @@ export class ClaudeCodeClient implements CodexProjectClient {
   onNotification: ((message: { method: string; params?: Record<string, unknown> }) => void | Promise<void>) | null;
   onServerRequest: ((request: CodexServerRequest) => void | Promise<void>) | null;
   onThreadChanged: ((threadId: string) => void) | null;
+  onSystemInit: ((data: { model: string; sessionId: string; cwd: string; permissionMode: string }) => void) | null;
 
   private sessionId: string | null = null;
   private replyBuffer = '';
@@ -86,6 +88,7 @@ export class ClaudeCodeClient implements CodexProjectClient {
     this.onNotification = options.onNotification ?? null;
     this.onServerRequest = options.onServerRequest ?? null;
     this.onThreadChanged = options.onThreadChanged ?? null;
+    this.onSystemInit = options.onSystemInit ?? null;
   }
 
   async start(): Promise<void> {
@@ -175,6 +178,14 @@ export class ClaudeCodeClient implements CodexProjectClient {
             this.onNotification?.({ method: 'session/reset', params: { previousSessionId, newSessionId: this.sessionId } });
           }
           this.onNotification?.({ method: 'system/init', params: { session_id: msg.session_id, tools: msg.message?.content } });
+
+          // Emit system/init data for AgentStatusManager
+          this.onSystemInit?.({
+            model: msg.model ?? 'unknown',
+            sessionId: msg.session_id ?? 'unknown',
+            cwd: msg.cwd ?? '',
+            permissionMode: msg.request?.mode ?? 'default',
+          });
         } else if (msg.subtype === 'status') {
           this.onNotification?.({ method: 'system/status', params: { permissionMode: msg.request?.mode } });
         } else if (msg.subtype === 'hook_started' || msg.subtype === 'hook_response') {
