@@ -558,14 +558,20 @@ export async function run(): Promise<void> {
     },
     createClient: (projectInstanceId: string, config, provider?: ProviderDescriptor) => {
       let command = typeof config.command === 'string' && config.command.trim() !== '' ? config.command.trim() : 'codex';
-      // cc provider defaults to 'claude' command if not explicitly configured
-      if ((provider?.kind ?? 'codex') === 'cc' && command === 'codex') {
-        command = 'claude';
+      const kind = provider?.kind ?? 'codex';
+      // Each provider kind defaults to its own command if project uses 'codex'
+      if (command === 'codex') {
+        if (kind === 'cc') {
+          command = 'claude';
+        } else if (kind === 'qwen') {
+          command = 'qwen';
+        } else if (kind === 'gemini') {
+          command = 'gemini';
+        }
       }
       const args = Array.isArray(config.args) && config.args.length > 0 ? config.args : ['app-server'];
       const serviceName = typeof config.serviceName === 'string' && config.serviceName.trim() !== '' ? config.serviceName.trim() : 'lark-agent-bridge';
       const providerId = provider?.id ?? projectInstanceId;
-      const providerKind = provider?.kind ?? 'codex';
       const providerTransport = provider?.transport ?? (config.transport === 'stdio' ? 'stdio' : 'websocket');
       const providerCwd =
         typeof provider?.remoteCwd === 'string' && provider.remoteCwd.trim() !== ''
