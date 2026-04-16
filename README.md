@@ -1,5 +1,7 @@
 # lark-agent-bridge
 
+[中文说明](./README_zh.md)
+
 `lark-agent-bridge` is a bridge service that connects Codex project instances to Feishu/Lark chat sessions.
 
 It keeps a one-to-one binding between a `projectInstanceId` and a chat session, routes inbound messages to the bound Codex project, and sends replies back to the same chat. The bridge also supports lazy project startup, multiple providers per project, and a local development mode that does not require Feishu.
@@ -17,13 +19,23 @@ It keeps a one-to-one binding between a `projectInstanceId` and a chat session, 
 
 ## Requirements
 
-- Node.js 24
+- Node.js 18.14.1 or higher (Node.js 24 recommended)
 - `codex` CLI for local Codex app-server projects
 - `@qwen-code/sdk` and a local Qwen binary if you use Qwen-backed projects
 - Feishu bot app credentials if you want to connect to Feishu
 - `pm2` if you want process management and `//restart` support in production
 
 ## Install
+
+### From GitHub
+
+```bash
+git clone https://github.com/ourbest/lark-agent-bridge.git
+cd lark-agent-bridge
+npm install
+```
+
+### From Source
 
 ```bash
 npm install

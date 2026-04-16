@@ -15,6 +15,7 @@ import type { BindingStore } from './storage/binding-store.ts';
 import type { ProjectDiagnostics, ProjectState } from './runtime/project-registry.ts';
 import type { ApprovalService } from './runtime/approval-service.ts';
 import type { ProjectConfig } from './runtime/project-registry.ts';
+import { AgentStatusManager } from './runtime/agent-status.ts';
 import { readCodexStatusLines } from './runtime/codex-status.ts';
 import {
   buildBridgeStatusCard,
@@ -26,6 +27,7 @@ import {
   buildUnavailableProjectCard,
   buildUnboundCard,
   buildFileReceivedCard,
+  buildAgentStatusCard,
   type CardFooterItem,
 } from './adapters/lark/cards.ts';
 import { saveMessageAttachments, type FileUploadResult } from './services/file-upload-service.ts';
@@ -39,6 +41,7 @@ export interface BridgeRuntime {
   router: BridgeRouter;
   larkAdapter: LarkAdapter;
   apiServer: Server;
+  agentStatusManager: AgentStatusManager;
   ready: boolean;
   reportProjectStatus(input: {
     projectId: string;
@@ -467,6 +470,7 @@ export function createBridgeApp(options: {
     executeStructuredCodexCommand: options.executeStructuredCodexCommand,
   });
   const activeStatusCards = new Map<string, ActiveStatusCard>();
+  const agentStatusManager = new AgentStatusManager();
 
   function setActiveStatusCard(input: ActiveStatusCard): void {
     activeStatusCards.set(input.sessionId, input);
@@ -1155,6 +1159,24 @@ export function createBridgeApp(options: {
       });
     }
 
+    // Update git state for the bound project
+    if (boundProjectId !== null && boundProjectConfig?.cwd) {
+      await agentStatusManager.updateGitState(boundProjectId, boundProjectConfig.cwd);
+    }
+
+    // Fetch background tasks
+    if (boundProjectId !== null && options.projectRegistry.listThreads) {
+      try {
+        const threads = await options.projectRegistry.listThreads(boundProjectId);
+        agentStatusManager.setBackgroundTasks(
+          boundProjectId,
+          threads.map(t => ({ id: t.id, name: t.name, status: t.status }))
+        );
+      } catch {
+        // Ignore errors from listThreads
+      }
+    }
+
     let outboundMessage = await router.routeInboundMessage(message);
     let recoveryState: 'restore not attempted' | 'restored handler but route still failed' | 'restore failed' | 'restore retry exhausted' =
       'restore not attempted';
@@ -1348,6 +1370,7 @@ export function createBridgeApp(options: {
     router,
     larkAdapter,
     apiServer,
+    agentStatusManager,
     get ready() {
       return ready;
     },
