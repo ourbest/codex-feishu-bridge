@@ -240,6 +240,7 @@ export class CodexAppServerClient {
       this.process = null;
     }
     this.currentReplyAborted = false;
+    this.jsonBuffer = '';
   }
 
   private async ensureStarted(): Promise<void> {
@@ -402,8 +403,10 @@ export class CodexAppServerClient {
     const message = { id, method, params };
 
     let timeoutId: NodeJS.Timeout | null = null;
+    let pendingRequestActive = false;
     const response = new Promise<unknown>((resolve, reject) => {
       this.pendingRequests.set(id, { resolve, reject });
+      pendingRequestActive = true;
       timeoutId = setTimeout(() => {
         this.pendingRequests.delete(id);
         reject(new Error(`Codex app-server request "${method}" (id=${id}) timed out after ${timeoutMs}ms`));
@@ -413,6 +416,11 @@ export class CodexAppServerClient {
     try {
       this.sendRaw(message);
       return await response;
+    } catch (error) {
+      if (pendingRequestActive) {
+        this.pendingRequests.delete(id);
+      }
+      throw error;
     } finally {
       if (timeoutId !== null) {
         clearTimeout(timeoutId);
@@ -635,6 +643,7 @@ export class CodexAppServerClient {
     this.currentReplyTurnId = null;
     this.currentReplyStatus = null;
     this.currentReplyAborted = false;
+    this.jsonBuffer = '';
 
     const pendingRequests = [...this.pendingRequests.values()];
     this.pendingRequests.clear();

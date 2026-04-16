@@ -595,6 +595,103 @@ test('starts a fresh thread with binding-friendly defaults', async () => {
   );
 });
 
+test('clears buffered stdio state when stopped or terminated', async () => {
+  const client = new CodexAppServerClient({
+    command: 'codex',
+    args: ['app-server'],
+    clientInfo: {
+      name: 'bridge-test',
+      title: 'Bridge Test',
+      version: '0.2.0-dev',
+    },
+    spawnAppServer() {
+      return {
+        stdin: {
+          write() {
+            return true;
+          },
+        },
+        stdout: new PassThrough(),
+        stderr: new PassThrough(),
+        kill() {
+          return true;
+        },
+        on() {
+          return undefined;
+        },
+      };
+    },
+  });
+
+  (client as unknown as { jsonBuffer: string }).jsonBuffer = '{"partial":';
+  await client.stop();
+  assert.equal((client as unknown as { jsonBuffer: string }).jsonBuffer, '');
+
+  (client as unknown as { jsonBuffer: string }).jsonBuffer = '{"partial":';
+  (client as unknown as { handleProcessTermination(error: Error): void }).handleProcessTermination(new Error('boom'));
+  assert.equal((client as unknown as { jsonBuffer: string }).jsonBuffer, '');
+});
+
+test('does not leave a pending request behind when sendRaw throws synchronously', async () => {
+  const client = new CodexAppServerClient({
+    command: 'codex',
+    args: ['app-server'],
+    clientInfo: {
+      name: 'bridge-test',
+      title: 'Bridge Test',
+      version: '0.2.0-dev',
+    },
+    transport: 'websocket',
+    websocketUrl: 'ws://127.0.0.1:4000',
+  });
+
+  (client as unknown as {
+    socket: {
+      readyState: number;
+      send(data: string): void;
+      close(): void;
+      onopen: ((event: unknown) => void) | null;
+      onmessage: ((event: { data: unknown }) => void) | null;
+      onerror: ((event: unknown) => void) | null;
+      onclose: ((event: unknown) => void) | null;
+    };
+  }).socket = {
+    readyState: 1,
+    send() {
+      throw new Error('socket write failed');
+    },
+    close() {
+      return undefined;
+    },
+    onopen: null,
+    onmessage: null,
+    onerror: null,
+    onclose: null,
+  };
+
+  const unhandledRejections: unknown[] = [];
+  const onUnhandledRejection = (reason: unknown) => {
+    unhandledRejections.push(reason);
+  };
+  process.on('unhandledRejection', onUnhandledRejection);
+
+  try {
+    await assert.rejects(
+      (client as unknown as { sendRequest(method: string, params: Record<string, unknown>, timeoutMs?: number): Promise<unknown> }).sendRequest(
+        'session/list',
+        {},
+        10,
+      ),
+      /socket write failed/,
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.deepEqual(unhandledRejections, []);
+  } finally {
+    process.off('unhandledRejection', onUnhandledRejection);
+  }
+});
+
 test('starts a fresh thread when forced even if one already exists', async () => {
   const writes: string[] = [];
   const stdout = new PassThrough();
