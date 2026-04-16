@@ -32,7 +32,7 @@ interface CodexThreadSnapshot {
   memoryMode?: string;
 }
 
-interface RateLimitWindow {
+export interface RateLimitWindow {
   usedPercent?: number;
   windowDurationMins?: number;
   resetsAt?: number;
@@ -330,7 +330,7 @@ function formatSessionId(sessionId: string | null): string {
   return sessionId ?? 'unknown';
 }
 
-function formatLimitBar(remainingPercent: number): string {
+export function formatLimitBar(remainingPercent: number): string {
   const fullBlocks = Math.max(0, Math.min(20, Math.round(remainingPercent / 5)));
   return `[${'█'.repeat(fullBlocks)}${'░'.repeat(20 - fullBlocks)}]`;
 }
