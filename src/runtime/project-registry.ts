@@ -376,7 +376,6 @@ export function createProjectRegistry(options: ProjectRegistryOptions): ProjectR
       },
     });
     const client = providerManager.getClient();
-    await providerManager.ensureActiveClient();
     const entry = {
       client,
       providerManager,
