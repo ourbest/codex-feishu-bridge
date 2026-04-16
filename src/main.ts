@@ -561,12 +561,8 @@ export async function run(): Promise<void> {
       const kind = provider?.kind ?? 'codex';
       // Each provider kind defaults to its own command if project uses 'codex'
       if (command === 'codex') {
-        if (kind === 'cc') {
-          command = 'claude';
-        } else if (kind === 'qwen') {
+        if (kind === 'qwen') {
           command = 'qwen';
-        } else if (kind === 'gemini') {
-          command = 'gemini';
         }
       }
       const args = Array.isArray(config.args) && config.args.length > 0 ? config.args : ['app-server'];
