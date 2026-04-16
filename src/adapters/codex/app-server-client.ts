@@ -75,6 +75,7 @@ export interface CodexAppServerClientOptions {
   allocateWebSocketPort?: () => Promise<number>;
   connectWebSocket?: (url: string) => Promise<CodexWebSocketLike>;
   spawnAppServer?: (command: string, args: string[], options: { cwd?: string; env?: NodeJS.ProcessEnv }) => CodexProcess;
+  onSystemInit?: (data: { model: string; sessionId: string; cwd: string; permissionMode: string }) => void;
 }
 
 type PendingRequest = {
@@ -101,15 +102,18 @@ export class CodexAppServerClient {
   private currentReplyStatus: string | null = null;
   private currentReplyAborted = false;
   private jsonBuffer = '';
+  private systemInitEmitted = false;
   onTextDelta: ((text: string) => void) | null = null;
   onTurnCompleted: (() => void) | null = null;
   onThreadChanged: ((threadId: string) => void) | null = null;
   onNotification: ((message: { method: string; params?: Record<string, unknown> }) => void) | null = null;
   onServerRequest: ((request: CodexServerRequest) => void | Promise<void>) | null = null;
+  onSystemInit: ((data: { model: string; sessionId: string; cwd: string; permissionMode: string }) => void) | null = null;
 
   constructor(options: CodexAppServerClientOptions) {
     this.options = options;
     this.activeTransport = options.transport ?? 'stdio';
+    this.onSystemInit = options.onSystemInit ?? null;
   }
 
   private resolveModel(defaultModel: string): string {
@@ -241,6 +245,7 @@ export class CodexAppServerClient {
     }
     this.currentReplyAborted = false;
     this.jsonBuffer = '';
+    this.systemInitEmitted = false;
   }
 
   private async ensureStarted(): Promise<void> {
@@ -326,6 +331,16 @@ export class CodexAppServerClient {
       },
     });
     this.sendNotification('initialized', {});
+    if (!this.systemInitEmitted) {
+      this.systemInitEmitted = true;
+      const resolvedModel = this.resolveModel('gpt-5.4-mini');
+      this.onSystemInit?.({
+        model: resolvedModel,
+        sessionId: this.threadId ?? 'default',
+        cwd: this.options.cwd ?? '',
+        permissionMode: 'default',
+      });
+    }
     await initialize;
   }
 
