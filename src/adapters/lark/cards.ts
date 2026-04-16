@@ -139,6 +139,66 @@ export function buildBridgeStatusCard(input: {
   });
 }
 
+export function buildAgentStatusCard(input: {
+  projectId: string;
+  statusLabel: string;
+  rateBar: string;
+  ratePercent: number;
+  cwd: string;
+  model: string;
+  sessionId: string;
+  gitStatus: 'modified' | 'clean' | 'unknown';
+  gitBranch: string;
+  gitDiffStat: string;
+  backgroundTasks?: Array<{ id: string; name: string; status: string }>;
+  footerItems?: CardFooterItem[];
+  template?: 'blue' | 'turquoise' | 'green' | 'yellow' | 'red' | 'grey';
+}): FeishuInteractiveCardMessage {
+  const gitStatusIcon = input.gitStatus === 'modified' ? '✗' : input.gitStatus === 'clean' ? '✓' : '?';
+  const gitLine = `git: ${gitStatusIcon} | branch: ${input.gitBranch || '?'} | ${input.gitDiffStat || ''}`;
+
+  const bodyLines = [
+    `Rate: ${input.rateBar} ${input.ratePercent}% left`,
+    '',
+    `${input.cwd} | ${input.model} | ${input.sessionId}`,
+    gitLine,
+  ];
+
+  if (input.backgroundTasks && input.backgroundTasks.length > 0) {
+    const taskSummary = input.backgroundTasks
+      .map(t => `${t.name} [${t.status}]`)
+      .join(' | ');
+    bodyLines.push(taskSummary);
+  }
+
+  const elements: Array<Record<string, unknown>> = [
+    { tag: 'markdown', content: bodyLines.join('\n') },
+  ];
+
+  if (input.footerItems !== undefined && input.footerItems.length > 0) {
+    elements.push({ tag: 'hr' });
+    elements.push(buildFooterMarkdown(input.footerItems));
+  }
+
+  return buildInteractiveCardMessage({
+    schema: '2.0',
+    config: {
+      enable_forward: true,
+      wide_screen_mode: true,
+      update_multi: true,
+      width_mode: 'fill',
+    },
+    header: {
+      template: input.template ?? 'blue',
+      title: plainText(`${input.projectId} | 🤖 Claude Code`),
+      subtitle: plainText(input.statusLabel),
+    },
+    body: {
+      elements,
+    },
+  });
+}
+
 export function buildMarkdownContentCard(input: {
   title: string;
   bodyMarkdown: string;

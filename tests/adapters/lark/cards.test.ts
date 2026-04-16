@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  buildAgentStatusCard,
   buildApprovalCard,
   buildApprovalResultCard,
   buildBridgeStatusCard,
@@ -280,4 +281,80 @@ test('builds an unavailable-project card with detailed diagnostics', () => {
   assert.equal(card.header?.subtitle?.content, '不可用');
   assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('Reconnecting... 2/5')));
   assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('Transport: websocket')));
+});
+
+test('buildAgentStatusCard builds card with all fields', () => {
+  const card = JSON.parse(
+    buildAgentStatusCard({
+      projectId: 'project-a',
+      statusLabel: 'working',
+      rateBar: '[████████░░]',
+      ratePercent: 80,
+      cwd: '/path/to/project',
+      model: 'opus-4-6',
+      sessionId: 'sess_abc123',
+      gitStatus: 'modified',
+      gitBranch: 'main',
+      gitDiffStat: '+5 -3',
+      backgroundTasks: [{ id: '1', name: 'analysis', status: 'running' }],
+      template: 'blue',
+    }).content,
+  ) as {
+    header?: { title?: { content?: string }; subtitle?: { content?: string }; template?: string };
+    body?: { elements?: Array<{ tag?: string; content?: string }> };
+  };
+
+  assert.equal(card.header?.title?.content, 'project-a | 🤖 Claude Code');
+  assert.equal(card.header?.subtitle?.content, 'working');
+  assert.equal(card.header?.template, 'blue');
+  const bodyText = JSON.stringify(card.body?.elements ?? []);
+  assert.ok(bodyText.includes('Rate: [████████░░] 80% left'));
+  assert.ok(bodyText.includes('/path/to/project | opus-4-6 | sess_abc123'));
+  assert.ok(bodyText.includes('git: ✗ | branch: main | +5 -3'));
+  assert.ok(bodyText.includes('analysis [running]'));
+});
+
+test('buildAgentStatusCard omits background tasks line when empty', () => {
+  const card = JSON.parse(
+    buildAgentStatusCard({
+      projectId: 'project-a',
+      statusLabel: 'done',
+      rateBar: '[██████████]',
+      ratePercent: 100,
+      cwd: '/path/to/project',
+      model: 'opus-4-6',
+      sessionId: 'sess_abc123',
+      gitStatus: 'clean',
+      gitBranch: 'main',
+      gitDiffStat: '',
+    }).content,
+  ) as {
+    body?: { elements?: Array<{ tag?: string; content?: string }> };
+  };
+
+  const bodyText = JSON.stringify(card.body?.elements ?? []);
+  assert.ok(!bodyText.includes('background'));
+  assert.ok(bodyText.includes('git: ✓ | branch: main |'));
+});
+
+test('buildAgentStatusCard handles unknown git status', () => {
+  const card = JSON.parse(
+    buildAgentStatusCard({
+      projectId: 'proj',
+      statusLabel: 'idle',
+      rateBar: '[░░░░░░░░░░]',
+      ratePercent: 0,
+      cwd: '/cwd',
+      model: 'sonnet',
+      sessionId: 'sess_x',
+      gitStatus: 'unknown',
+      gitBranch: '',
+      gitDiffStat: '',
+    }).content,
+  ) as {
+    body?: { elements?: Array<{ tag?: string; content?: string }> };
+  };
+
+  const bodyText = JSON.stringify(card.body?.elements ?? []);
+  assert.ok(bodyText.includes('git: ? | branch: ? |'));
 });
