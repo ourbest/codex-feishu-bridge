@@ -515,6 +515,25 @@ export class CodexAppServerClient {
       });
     }
 
+    // Handle tool/use notifications from codex protocol
+    // The codex protocol sends tool_use as a message with subtype='tool_use'
+    // and tool details in msg.request
+    if ((message as Record<string, unknown>).subtype === 'tool_use') {
+      const msg = message as Record<string, unknown>;
+      const request = msg.request as Record<string, unknown> | undefined;
+      const msgMessage = msg.message as { content?: Array<{ text?: string }> } | undefined;
+      this.onNotification?.({
+        method: 'tool/use',
+        params: {
+          tool_name: request?.tool_name ?? null,
+          input: request?.input,
+          output: msgMessage?.content?.[0]?.text,
+          status: 'completed',
+          timestamp: Date.now(),
+        },
+      });
+    }
+
     if (message.method === 'item/agentMessage/delta') {
       if (this.currentReplyAborted) {
         return;
