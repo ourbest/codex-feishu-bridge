@@ -5,6 +5,7 @@ import type { BridgeStateStore } from '../storage/binding-store.ts';
 import type { Thread } from './thread-manager.ts';
 import { ProviderManager } from './provider-manager.ts';
 import type { ProviderDescriptor, ProviderKind, ProviderState } from './provider-registry.ts';
+import type { PermissionMode } from './project-config.ts';
 
 export interface ProjectConfig {
   projectInstanceId: string;
@@ -12,6 +13,7 @@ export interface ProjectConfig {
   args: string[];
   cwd?: string;
   model?: string;
+  permissionMode?: string;
   serviceName: string;
   transport: 'stdio' | 'websocket';
   websocketUrl?: string;
@@ -81,7 +83,7 @@ export interface ProjectRegistry {
   getProjectProviders(projectInstanceId: string): Promise<ProviderState[]>;
   getActiveProvider(projectInstanceId: string): Promise<string | null>;
   setActiveProvider(projectInstanceId: string, provider: string): Promise<void>;
-  setProjectMode(projectInstanceId: string, mode: string): Promise<void>;
+  setProjectMode(projectInstanceId: string, mode: PermissionMode): Promise<void>;
   describeProject(projectInstanceId: string): Promise<ProjectState>;
   getProjectDiagnostics(projectInstanceId: string): Promise<ProjectDiagnostics | null>;
   stop(): Promise<void>;
@@ -831,11 +833,12 @@ export function createProjectRegistry(options: ProjectRegistryOptions): ProjectR
       await entry.providerManager.setActiveProvider(provider);
     },
 
-    async setProjectMode(projectInstanceId: string, mode: string): Promise<void> {
+    async setProjectMode(projectInstanceId: string, mode: PermissionMode): Promise<void> {
       const entry = activeProjects.get(projectInstanceId);
-      if (entry) {
-        entry.config.permissionMode = mode;
+      if (!entry) {
+        throw new Error(`Project ${projectInstanceId} is not active`);
       }
+      entry.config.permissionMode = mode;
     },
 
     async describeProject(projectInstanceId: string): Promise<ProjectState> {
