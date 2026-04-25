@@ -351,20 +351,59 @@ function buildInFlightStatusMarkdown(input: {
   requestText: string;
   streamedReply: string;
   latestSummary?: string | null;
+  toolCalls?: ToolCallEntry[];
 }): string {
-  const sections = [
+  const sections: string[] = [
     `正在处理消息：\n\n\`\`\`text\n${sanitizeCodeFence(input.requestText)}\n\`\`\``,
   ];
+
+  type TimelineEntry = { timestamp: number; type: 'tool' | 'reply'; content: string };
+  const timeline: TimelineEntry[] = [];
+
+  if (input.toolCalls) {
+    for (const tc of input.toolCalls) {
+      timeline.push({
+        timestamp: tc.timestamp,
+        type: 'tool',
+        content: formatToolCallEntry(tc),
+      });
+    }
+  }
+
+  if (input.streamedReply.trim() !== '') {
+    timeline.push({
+      timestamp: Date.now(),
+      type: 'reply',
+      content: `当前回复：\n\n\`\`\`text\n${sanitizeCodeFence(input.streamedReply)}\n\`\`\``,
+    });
+  }
+
+  timeline.sort((a, b) => a.timestamp - b.timestamp);
+  for (const entry of timeline) {
+    sections.push(entry.content);
+  }
 
   if (input.latestSummary?.trim()) {
     sections.push(`最新进展：\n\n\`\`\`text\n${sanitizeCodeFence(input.latestSummary)}\n\`\`\``);
   }
 
-  if (input.streamedReply.trim() !== '') {
-    sections.push(`当前回复：\n\n\`\`\`text\n${sanitizeCodeFence(input.streamedReply)}\n\`\`\``);
+  return sections.join('\n\n');
+}
+
+function formatToolCallEntry(tc: ToolCallEntry): string {
+  const time = new Date(tc.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const icon = tc.status === 'completed' ? '✅' : tc.status === 'failed' ? '❌' : '🔧';
+  const name = tc.toolName;
+
+  if (tc.status === 'started') {
+    return `[${time}] ${icon} **${name}**\n\`\`\`\n${tc.input ?? ''}\n\`\`\``;
   }
 
-  return sections.join('\n\n');
+  if (tc.status === 'completed') {
+    return `[${time}] ${icon} **${name}**\n\`\`\`\n${tc.input ?? ''}\n\`\`\`\n\n**结果：** ${tc.output ?? '(完成)'}`;
+  }
+
+  return `[${time}] ${icon} **${name}**\n\`\`\`\n${tc.input ?? ''}\n\`\`\`\n\n**错误：** ${tc.output ?? 'unknown'}`;
 }
 
 function buildRealtimeStatusPresentation(input: {
@@ -603,6 +642,7 @@ export function createBridgeApp(options: {
         requestText: entry.requestText,
         streamedReply: entry.streamedReply,
         latestSummary: entry.latestSummary,
+        toolCalls: entry.toolCalls,
       });
 
       presentation = {
