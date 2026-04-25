@@ -74,7 +74,7 @@ export interface ChatCommandService {
 }
 
 function isBridgeCommandToken(token: string): boolean {
-  return token === 'bind' || token === 'unbind' || token === 'list' || token === 'help' || token === 'status' || token === 'sessions' || token === 'read' || token === 'restart' || token === 'abort' || token === 'reload' || token === 'resume' || token === 'new' || token === 'model' || token === 'projects' || token === 'providers' || token === 'provider' || token === 'project' || token === 'approve-test' || token === 'thread';
+  return token === 'bind' || token === 'unbind' || token === 'list' || token === 'help' || token === 'status' || token === 'sessions' || token === 'read' || token === 'restart' || token === 'abort' || token === 'reload' || token === 'resume' || token === 'new' || token === 'model' || token === 'mode' || token === 'projects' || token === 'providers' || token === 'provider' || token === 'project' || token === 'approve-test' || token === 'thread';
 }
 
 function isCodexCommandToken(token: string): boolean {
@@ -120,6 +120,7 @@ function buildHelpLines(): string[] {
     '  //status            - show bridge and codex state',
     '  //read <path>       - read a project file and send it to chat as a file',
     '  //model <model>     - set the project model',
+    '  //mode [plan|auto-edit|yolo] - set the project execution mode',
     '  //restart           - restart the bridge process',
     '  //abort             - abort the current task',
     '  //reload projects   - reload projects.json',
@@ -456,6 +457,40 @@ async function updateProjectModelLines(
   return [`[lark-agent-bridge] project model set to ${normalizedModel}`];
 }
 
+async function updateProjectModeLines(
+  dependencies: ChatCommandServiceDependencies,
+  projectId: string,
+  mode: string | null | undefined,
+): Promise<string[]> {
+  const projectConfig = dependencies.projectRegistry.getProjectConfig?.(projectId) ?? null;
+  if (projectConfig === null) {
+    return [`[lark-agent-bridge] project config is not available for ${projectId}`];
+  }
+
+  if (dependencies.projectRegistry.updateProjectConfig === undefined) {
+    return ['[lark-agent-bridge] project mode updates are not configured'];
+  }
+
+  if (mode === undefined) {
+    const currentMode = projectConfig.permissionMode ?? 'auto-edit';
+    return [`[lark-agent-bridge] project mode: ${currentMode}`];
+  }
+
+  const normalizedMode = mode.trim().toLowerCase();
+  if (normalizedMode === '') {
+    return ['Usage: //mode <plan|auto-edit|yolo>'];
+  }
+
+  const validModes: PermissionMode[] = ['plan', 'auto-edit', 'yolo'];
+  if (!validModes.includes(normalizedMode as PermissionMode)) {
+    return ['Usage: //mode <plan|auto-edit|yolo>'];
+  }
+
+  await dependencies.projectRegistry.updateProjectConfig(projectId, { permissionMode: normalizedMode as PermissionMode });
+
+  return [`[lark-agent-bridge] project mode set to ${normalizedMode}`];
+}
+
 function resolveCodexCommand(
   command: string,
   args: string[],
@@ -700,6 +735,19 @@ export function createChatCommandService(dependencies: ChatCommandServiceDepende
             }
 
             return await updateProjectModelLines(dependencies, projectId, parsed.args[0]);
+          }
+
+          case 'mode': {
+            if (parsed.args.length > 1) {
+              return ['Usage: //mode [plan|auto-edit|yolo]'];
+            }
+
+            const projectId = await dependencies.bindingService.getProjectBySession(input.sessionId);
+            if (projectId === null) {
+              return formatNotBoundMessage();
+            }
+
+            return await updateProjectModeLines(dependencies, projectId, parsed.args[0]);
           }
 
           case 'restart':
