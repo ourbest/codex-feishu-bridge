@@ -214,8 +214,27 @@ export class ClaudeCodeClient implements CodexProjectClient {
         // Tool result returned - forward as notification
         if (msg.message?.content) {
           for (const block of msg.message.content) {
-            if (block.type === 'tool_result') {
-              this.onNotification?.({ method: 'tool/result', params: { tool_use_id: block.tool_use_id, content: block } });
+            if (block.type === 'tool_use') {
+              this.onNotification?.({
+                method: 'tool/use',
+                params: {
+                  tool_name: block.tool_name,
+                  input: block.input,
+                  status: 'started',
+                  timestamp: Date.now(),
+                },
+              });
+            } else if (block.type === 'tool_result') {
+              this.onNotification?.({
+                method: 'tool/use',
+                params: {
+                  tool_name: block.tool_name,
+                  input: block.input,
+                  output: (block as { text?: string }).text,
+                  status: 'completed',
+                  timestamp: Date.now(),
+                },
+              });
             }
           }
         }
