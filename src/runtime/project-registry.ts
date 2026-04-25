@@ -81,6 +81,7 @@ export interface ProjectRegistry {
   getProjectProviders(projectInstanceId: string): Promise<ProviderState[]>;
   getActiveProvider(projectInstanceId: string): Promise<string | null>;
   setActiveProvider(projectInstanceId: string, provider: string): Promise<void>;
+  setProjectMode(projectInstanceId: string, mode: string): Promise<void>;
   describeProject(projectInstanceId: string): Promise<ProjectState>;
   getProjectDiagnostics(projectInstanceId: string): Promise<ProjectDiagnostics | null>;
   stop(): Promise<void>;
@@ -828,6 +829,13 @@ export function createProjectRegistry(options: ProjectRegistryOptions): ProjectR
       }
 
       await entry.providerManager.setActiveProvider(provider);
+    },
+
+    async setProjectMode(projectInstanceId: string, mode: string): Promise<void> {
+      const entry = activeProjects.get(projectInstanceId);
+      if (entry) {
+        entry.config.permissionMode = mode;
+      }
     },
 
     async describeProject(projectInstanceId: string): Promise<ProjectState> {
