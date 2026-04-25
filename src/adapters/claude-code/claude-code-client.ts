@@ -301,15 +301,17 @@ export class ClaudeCodeClient implements CodexProjectClient {
     }
   }
 
-  private sendMessage(msg: object): void {
+  private sendMessage(msg: object): boolean {
     if (!this.proc?.stdin || !this.stdinReady) {
       console.warn(`[claude-code] stdin not ready, cannot send: ${JSON.stringify(msg).slice(0, 100)}`);
-      return;
+      return false;
     }
     try {
       this.proc.stdin.write(JSON.stringify(msg) + '\n');
+      return true;
     } catch (err) {
       console.error(`[claude-code] write error: ${err}`);
+      return false;
     }
   }
 
@@ -340,13 +342,16 @@ export class ClaudeCodeClient implements CodexProjectClient {
     if (!this.proc) {
       await this.start();
     }
-    this.sendMessage({
+    const sent = this.sendMessage({
       type: 'user',
       message: {
         role: 'user',
         content: text,
       },
     });
+    if (!sent) {
+      throw new Error(`Failed to send input: stdin not ready`);
+    }
   }
 
   async startThread(input?: { cwd?: string; force?: boolean }): Promise<string> {
@@ -419,23 +424,22 @@ export class ClaudeCodeClient implements CodexProjectClient {
     }
 
     console.log(`[claude-code] sending control_response: behavior=${behavior}`);
-    try {
-      this.sendMessage({
-        type: 'control_response',
+    const sent = this.sendMessage({
+      type: 'control_response',
+      response: {
+        subtype: 'success',
+        request_id: String(requestId),
         response: {
-          subtype: 'success',
-          request_id: String(requestId),
-          response: {
-            behavior,
-            ...(pendingRequest?.input !== undefined ? { updatedInput: pendingRequest.input } : {}),
-            ...(message !== undefined ? { message } : {}),
-          },
+          behavior,
+          ...(pendingRequest?.input !== undefined ? { updatedInput: pendingRequest.input } : {}),
+          ...(message !== undefined ? { message } : {}),
         },
-      });
-      this.pendingServerRequests.delete(requestKey);
-    } catch (err) {
-      console.error(`[claude-code] failed to send control_response: ${err}`);
+      },
+    });
+    if (!sent) {
+      throw new Error(`Failed to send control_response: stdin not ready`);
     }
+    this.pendingServerRequests.delete(requestKey);
   }
 
   private buildApprovalSignature(request: { toolName?: string; input?: unknown } | null): string | null {
