@@ -359,6 +359,44 @@ test('loads stdio project configs from projects file shape', () => {
   rmSync(tempDir, { recursive: true, force: true });
 });
 
+test('resolves relative cwd values from the projects file directory', () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'lark-agent-bridge-projects-'));
+  const filePath = join(tempDir, 'projects.json');
+
+  writeFileSync(
+    filePath,
+    `${JSON.stringify(
+      {
+        projects: [
+          {
+            projectInstanceId: 'project-a',
+            cwd: './workspace/project-a',
+          },
+        ],
+      },
+      null,
+      2,
+    )}\n`,
+    'utf8',
+  );
+
+  assert.deepEqual(loadProjectsFromFile(filePath), [
+    {
+      projectInstanceId: 'project-a',
+      command: 'codex',
+      args: ['app-server'],
+      cwd: join(tempDir, 'workspace/project-a'),
+      serviceName: 'lark-agent-bridge',
+      transport: 'websocket',
+      websocketUrl: 'ws://127.0.0.1:4000',
+      adapterType: 'codex',
+      providers: defaultProviders(),
+    },
+  ]);
+
+  rmSync(tempDir, { recursive: true, force: true });
+});
+
 test('writes projects file snapshots in the same shape they are read from', () => {
   const tempDir = mkdtempSync(join(tmpdir(), 'lark-agent-bridge-projects-'));
   const filePath = join(tempDir, 'projects.json');

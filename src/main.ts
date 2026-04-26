@@ -804,6 +804,16 @@ export async function run(): Promise<void> {
         summary,
       });
     },
+    onToolUse: ({ projectInstanceId, toolName, input, output, status, timestamp }) => {
+      console.log(`[lark-agent-bridge] tool/use: project=${projectInstanceId} tool=${toolName} status=${status}`);
+      agentStatusManager.addToolCall(projectInstanceId, {
+        timestamp,
+        toolName,
+        input,
+        output,
+        status,
+      });
+    },
     router: app.router,
     onStatusChange: async ({ projectInstanceId, status, reason, source }) => {
       console.log(

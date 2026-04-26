@@ -14,6 +14,8 @@ export interface CodexStatusReadOptions {
   logsPath?: string;
   runSqliteJson?: (databasePath: string, query: string) => Promise<Array<Record<string, unknown>> | null>;
   sqliteTimeoutMs?: number;
+  /** Provider kind to determine data directory: 'codex' uses ~/.codex/, 'cc' uses ~/.claude/ */
+  providerKind?: 'codex' | 'cc' | 'qwen' | 'gemini';
 }
 
 interface CodexConfigSnapshot {
@@ -263,16 +265,19 @@ async function readRateLimitsSnapshot(
     ? await withTimeout(runSqliteJson(logsPath, query), sqliteTimeoutMs)
     : await querySqliteJson(logsPath, query, sqliteTimeoutMs);
   if (rows === null || rows.length === 0) {
+    console.warn(`[codex-status] readRateLimitsSnapshot: no rows returned for query on ${logsPath}`);
     return null;
   }
 
   for (const row of rows) {
     const snapshot = parseRateLimitsSnapshot(row);
     if (snapshot !== null) {
+      console.log(`[codex-status] readRateLimitsSnapshot: parsed rate limits from ${logsPath}: primary=${JSON.stringify(snapshot.primary)} secondary=${JSON.stringify(snapshot.secondary)}`);
       return snapshot;
     }
   }
 
+  console.warn(`[codex-status] readRateLimitsSnapshot: failed to parse any row from ${logsPath} (${rows.length} rows available)`);
   return null;
 }
 
@@ -368,7 +373,16 @@ function formatLimitLine(label: string, window: RateLimitWindow | null | undefin
   return `${label}: ${bar} ${percentText}${resetText}`;
 }
 
-function resolveCodexHome(homeDir: string): string {
+function resolveCodexHome(homeDir: string, providerKind?: string): string {
+  if (providerKind === 'cc' || providerKind === 'claude-code') {
+    return path.join(homeDir, '.claude');
+  }
+  if (providerKind === 'qwen' || providerKind === 'qwen-code') {
+    return path.join(homeDir, '.qwen');
+  }
+  if (providerKind === 'gemini' || providerKind === 'gemini-cli') {
+    return path.join(homeDir, '.gemini');
+  }
   return path.join(homeDir, '.codex');
 }
 
@@ -396,12 +410,14 @@ export async function readCodexStatusLines(options: CodexStatusReadOptions = {})
   const homeDir = options.homeDir ?? process.env.HOME ?? os.homedir();
   const workspaceRoot = path.resolve(options.workspaceRoot ?? process.cwd());
   const sqliteTimeoutMs = options.sqliteTimeoutMs ?? 250;
-  const codexHome = resolveCodexHome(homeDir);
+  const codexHome = resolveCodexHome(homeDir, options.providerKind);
   const configPath = options.configPath ?? path.join(codexHome, 'config.toml');
   const historyPath = options.historyPath ?? path.join(codexHome, 'history.jsonl');
   const globalStatePath = options.globalStatePath ?? path.join(codexHome, '.codex-global-state.json');
   const statePath = options.statePath ?? findLatestCodexDatabase(codexHome, 'state_');
   const logsPath = options.logsPath ?? findLatestCodexDatabase(codexHome, 'logs_');
+
+  console.log(`[codex-status] readCodexStatusLines: codexHome=${codexHome} statePath=${statePath} logsPath=${logsPath}`);
 
   const config = readCodexConfig(configPath);
   const globalState = readJsonFileIfExists<Record<string, unknown>>(globalStatePath);
@@ -424,6 +440,8 @@ export async function readCodexStatusLines(options: CodexStatusReadOptions = {})
 
   const primaryLimitLine = formatLimitLine('5h limit', rateLimits?.primary ?? null, false);
   const weeklyLimitLine = formatLimitLine('Weekly limit', rateLimits?.secondary ?? null, true);
+
+  console.log(`[codex-status] readCodexStatusLines: returning lines: ${JSON.stringify([modelLine, primaryLimitLine, weeklyLimitLine])}`);
 
   return [
     `Model: ${modelLine}`,

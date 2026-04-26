@@ -50,3 +50,19 @@ export function providerToAdapterType(kind: ProviderKind): 'codex' | 'claude-cod
 
   return 'qwen-code';
 }
+
+export function getProviderDisplayName(kind: string | undefined | null): string {
+  if (kind === 'codex') {
+    return 'Codex';
+  }
+  if (kind === 'cc' || kind === 'claude-code') {
+    return 'Claude Code';
+  }
+  if (kind === 'qwen' || kind === 'qwen-code') {
+    return 'Qwen';
+  }
+  if (kind === 'gemini' || kind === 'gemini-cli') {
+    return 'Gemini';
+  }
+  return 'Claude Code';
+}

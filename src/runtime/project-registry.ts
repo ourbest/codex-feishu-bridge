@@ -54,6 +54,14 @@ export interface ProjectRegistryOptions {
     textDelta?: string;
     summary?: string;
   }) => void | Promise<void>;
+  onToolUse?: (input: {
+    projectInstanceId: string;
+    toolName: string;
+    input?: string;
+    output?: string;
+    status: 'started' | 'completed' | 'failed';
+    timestamp: number;
+  }) => void | Promise<void>;
   onServerRequest?: (input: {
     projectInstanceId: string;
     request: CodexServerRequest;
@@ -216,6 +224,20 @@ export function createProjectRegistry(options: ProjectRegistryOptions): ProjectR
       const summary = summarizeProgressNotification(message.method, message.params);
       if (summary !== null) {
         emitProgress(projectId, { summary });
+      }
+
+      if (message.method === 'tool/use' && options.onToolUse !== undefined) {
+        const params = message.params as { tool_name?: string; input?: string; output?: string; status?: string; timestamp?: number } | undefined;
+        if (params?.tool_name && params?.status) {
+          void options.onToolUse({
+            projectInstanceId: projectId,
+            toolName: params.tool_name,
+            input: params.input,
+            output: params.output,
+            status: params.status as 'started' | 'completed' | 'failed',
+            timestamp: params.timestamp ?? Date.now(),
+          });
+        }
       }
 
       const status = readProjectStatus(message.method, message.params);

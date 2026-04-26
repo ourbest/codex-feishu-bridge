@@ -7,6 +7,7 @@ describe('Agent Status Card Integration', () => {
     const card = buildAgentStatusCard({
       projectId: 'test-project',
       statusLabel: 'working',
+      bodyMarkdown: '正在处理中...',
       rateBar: '[████████░░]',
       ratePercent: 80,
       cwd: '/workspace/test',
@@ -24,23 +25,28 @@ describe('Agent Status Card Integration', () => {
 
     const content = JSON.parse(card.content);
 
-    // Verify header
+    // Verify header - subtitle includes rate info
     assert.strictEqual(content.header.title.content, 'test-project | 🤖 Claude Code');
-    assert.strictEqual(content.header.subtitle.content, 'working');
+    assert.strictEqual(content.header.subtitle.content, 'working | [████████░░] 80% left');
 
-    // Verify body contains all expected fields
+    // Verify body contains the processing content
     const bodyContent = content.body.elements[0].content;
-    assert.ok(bodyContent.includes('Rate: [████████░░] 80% left'));
-    assert.ok(bodyContent.includes('/workspace/test | opus-4-6 | sess_test123'));
-    assert.ok(bodyContent.includes('git: ✗ | branch: main | +10 -5'));
-    assert.ok(bodyContent.includes('analysis [running]'));
-    assert.ok(bodyContent.includes('backup [paused]'));
+    assert.ok(bodyContent.includes('正在处理中...'));
+    // Agent status info is in footer (elements after hr)
+    const bodyText = JSON.stringify(content.body.elements);
+    assert.ok(bodyText.includes('/workspace/test'));
+    assert.ok(bodyText.includes('opus-4-6'));
+    assert.ok(bodyText.includes('sess_test123'));
+    assert.ok(bodyText.includes('git: ✗ | branch: main | +10 -5'));
+    assert.ok(bodyText.includes('analysis [running]'));
+    assert.ok(bodyText.includes('backup [paused]'));
   });
 
   it('should render card with minimal fields', () => {
     const card = buildAgentStatusCard({
       projectId: 'minimal-project',
       statusLabel: 'done',
+      bodyMarkdown: '任务完成',
       rateBar: '[██████████]',
       ratePercent: 100,
       cwd: '/workspace/minimal',
@@ -54,11 +60,12 @@ describe('Agent Status Card Integration', () => {
     const content = JSON.parse(card.content);
 
     assert.strictEqual(content.header.title.content, 'minimal-project | 🤖 Claude Code');
-    assert.strictEqual(content.header.subtitle.content, 'done');
+    assert.strictEqual(content.header.subtitle.content, 'done | [██████████] 100% left');
 
-    const bodyContent = content.body.elements[0].content;
-    assert.ok(bodyContent.includes('Rate: [██████████] 100% left'));
-    assert.ok(bodyContent.includes('/workspace/minimal | sonnet-4 | sess_minimal'));
-    assert.ok(bodyContent.includes('git: ✓ | branch: develop |'));
+    const bodyText = JSON.stringify(content.body.elements);
+    assert.ok(bodyText.includes('/workspace/minimal'));
+    assert.ok(bodyText.includes('sonnet-4'));
+    assert.ok(bodyText.includes('sess_minimal'));
+    assert.ok(bodyText.includes('git: ✓ | branch: develop |'));
   });
 });

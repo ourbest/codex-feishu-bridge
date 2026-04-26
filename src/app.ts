@@ -642,7 +642,7 @@ export function createBridgeApp(options: {
         requestText: entry.requestText,
         streamedReply: entry.streamedReply,
         latestSummary: entry.latestSummary,
-        toolCalls: entry.toolCalls,
+        toolCalls: agentStatus.toolCalls,
       });
 
       presentation = {

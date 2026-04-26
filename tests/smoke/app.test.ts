@@ -140,7 +140,7 @@ test('boots the bridge runtime and forwards a routed reply back to lark', async 
     header?: { title?: { content?: string }; subtitle?: { content?: string } };
     body?: { elements?: Array<{ tag?: string; content?: string }> };
   };
-  assert.equal(processingCard.header?.title?.content, 'project-a');
+  assert.equal(processingCard.header?.title?.content, 'project-a | 🤖 Claude Code');
   assert.equal(processingCard.header?.subtitle?.content, '处理中');
   assert.ok(processingCard.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('hello')));
 
@@ -148,7 +148,7 @@ test('boots the bridge runtime and forwards a routed reply back to lark', async 
     header?: { title?: { content?: string }; subtitle?: { content?: string } };
     body?: { elements?: Array<{ tag?: string; content?: string }> };
   };
-  assert.equal(card.header?.title?.content, 'project-a');
+  assert.equal(card.header?.title?.content, 'project-a | 🤖 Claude Code');
   assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('reply:hello')));
   const footer = card.body?.elements?.find((element) => element.tag === 'markdown' && typeof element.content === 'string' && element.content.includes('/repo/project-a'));
   assert.ok(footer);
@@ -160,6 +160,97 @@ test('boots the bridge runtime and forwards a routed reply back to lark', async 
 
   await app.stop();
   assert.equal(app.ready, false);
+});
+
+test('does not route plain text messages through command handling', async () => {
+  const sentCards: Array<{ sessionId: string; card: { msg_type: 'interactive'; content: string }; fallbackText?: string }> = [];
+  let eventHandler: ((event: LarkEventPayload) => Promise<void> | void) | null = null;
+  const approvalCalls: string[] = [];
+
+  const transport = {
+    onEvent(handler) {
+      eventHandler = handler;
+    },
+    async sendMessage() {
+      return undefined;
+    },
+    async sendCard(message) {
+      sentCards.push(message);
+      return { messageId: `card-${sentCards.length}` };
+    },
+    async updateCard() {
+      return true;
+    },
+    async sendReaction() {
+      return undefined;
+    },
+  } as LarkTransport;
+
+  const app = createBridgeApp({
+    config: loadConfig({}),
+    larkTransport: transport,
+    approvalService: {
+      async registerRequest() {
+        throw new Error('not used');
+      },
+      async attachCardMessage() {},
+      getCardMessageId() {
+        return null;
+      },
+      async handleAction() {
+        return null;
+      },
+      async handleCommand(input) {
+        approvalCalls.push(input.text);
+        return ['[lark-agent-bridge] approval command should not run'];
+      },
+    } as never,
+    projectRegistry: {
+      async describeProject(projectInstanceId) {
+        return {
+          projectInstanceId,
+          configured: true,
+          active: true,
+          removed: false,
+          sessionCount: 1,
+        };
+      },
+      getProjectConfig(projectInstanceId) {
+        return {
+          projectInstanceId,
+          cwd: '/repo/project-a',
+          transport: 'websocket',
+          command: 'codex',
+          args: ['app-server'],
+        };
+      },
+    },
+  });
+
+  app.router.registerProjectHandler('project-a', async ({ message }) => ({
+    text: `reply:${message.text}`,
+  }));
+
+  await app.bindingService.bindProjectToSession('project-a', 'session-a');
+  await app.start();
+  assert.ok(eventHandler);
+
+  await eventHandler!({
+    sessionId: 'session-a',
+    messageId: 'message-plain-text',
+    text: 'hello',
+    senderId: 'user-a',
+    timestamp: '2026-04-23T00:00:00.000Z',
+  });
+
+  assert.deepEqual(approvalCalls, []);
+  assert.equal(sentCards.length, 2);
+  const replyCard = JSON.parse(sentCards[1]?.card.content ?? '{}') as {
+    body?: { elements?: Array<{ tag?: string; content?: string }> };
+  };
+  assert.ok(replyCard.body?.elements?.some((element) => String(element.content).includes('reply:hello')));
+
+  await app.stop();
 });
 
 test('transcribes audio attachments before routing the message to the project handler', async () => {
@@ -256,7 +347,7 @@ test('transcribes audio attachments before routing the message to the project ha
     header?: { title?: { content?: string }; subtitle?: { content?: string } };
     body?: { elements?: Array<{ tag?: string; content?: string }> };
   };
-  assert.equal(transcribingCard.header?.title?.content, 'project-a');
+  assert.equal(transcribingCard.header?.title?.content, 'project-a | 🤖 Claude Code');
   assert.equal(transcribingCard.header?.subtitle?.content, '语音转写中');
   assert.ok(transcribingCard.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('正在转写语音附件：')));
   const finalCard = JSON.parse(sentCards[1]?.card.content ?? '{}') as {
@@ -749,9 +840,113 @@ test('updates the same status card for waiting approval and reconnecting while a
     header?: { subtitle?: { content?: string } };
     body?: { elements?: Array<{ tag?: string; content?: string }> };
   };
-  assert.equal(completedCard.header?.title?.content, 'project-a');
+  assert.equal(completedCard.header?.title?.content, 'project-a | 🤖 Claude Code');
   assert.ok(completedCard.body?.elements?.some((element) => String(element.content).includes('reply:hello')));
 
+  await app.stop();
+});
+
+test('uses the injected codexStatusProvider when rendering the in-flight status card', async () => {
+  const sentCards: Array<{ sessionId: string; card: { msg_type: 'interactive'; content: string }; fallbackText?: string }> = [];
+  const updatedCards: Array<{ messageId: string; card: { msg_type: 'interactive'; content: string }; fallbackText?: string }> = [];
+  let eventHandler: ((event: LarkEventPayload) => Promise<void> | void) | null = null;
+  let resolveReply: ((value: { text: string }) => void) | null = null;
+
+  const transport = {
+    onEvent(handler) {
+      eventHandler = handler;
+    },
+    async sendMessage() {
+      return undefined;
+    },
+    async sendCard(message) {
+      sentCards.push(message);
+      return { messageId: `card-${sentCards.length}` };
+    },
+    async updateCard(message) {
+      updatedCards.push(message);
+      return true;
+    },
+    async sendReaction() {},
+  } as LarkTransport;
+
+  const app = createBridgeApp({
+    config: loadConfig({}),
+    larkTransport: transport,
+    codexStatusProvider: async () => [
+      'Model: gpt-5.4-mini (reasoning medium, summaries auto)',
+      'Directory: ~/git/lark-agent-bridge',
+      'Permissions: Full Access',
+      'Agents.md: AGENTS.md',
+      'Collaboration mode: Default',
+      'Session: 019d5e2f-9356-7903-9cdd-5ed89c556893',
+      '5h limit: [████████░░░░░░░░░░░░] 42% left (resets 11:01)',
+      'Weekly limit: [█████░░░░░░░░░░░░░░░] 25% left (resets 18:26 on 8 Apr)',
+    ],
+    projectRegistry: {
+      async describeProject(projectInstanceId) {
+        return {
+          projectInstanceId,
+          configured: true,
+          active: true,
+          removed: false,
+          sessionCount: 1,
+        };
+      },
+      async getActiveProvider() {
+        return 'codex';
+      },
+      getProjectConfig(projectInstanceId) {
+        return {
+          projectInstanceId,
+          cwd: '/repo/project-a',
+          transport: 'websocket',
+          command: 'codex',
+          args: ['app-server'],
+          activeProvider: 'codex',
+        };
+      },
+    },
+  });
+
+  app.router.registerProjectHandler('project-a', async () => await new Promise<{ text: string }>((resolve) => {
+    resolveReply = resolve;
+  }));
+
+  await app.bindingService.bindProjectToSession('project-a', 'session-a');
+  await app.start();
+  assert.ok(eventHandler);
+
+  const inFlight = eventHandler!({
+    sessionId: 'session-a',
+    messageId: 'message-status-provider',
+    text: 'hello',
+    senderId: 'user-a',
+    timestamp: '2026-03-29T00:00:00.000Z',
+  });
+
+  for (let index = 0; index < 50 && sentCards.length === 0; index += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+
+  assert.equal(sentCards.length, 1);
+
+  await app.reportProjectStatus({
+    projectId: 'project-a',
+    sessionId: 'session-a',
+    status: 'working',
+    source: 'notification',
+  });
+
+  assert.equal(updatedCards.length, 1);
+  const statusSource = updatedCards[0];
+  const statusCard = JSON.parse(statusSource?.card.content ?? '{}') as {
+    header?: { subtitle?: { content?: string } };
+  };
+  assert.equal(statusCard.header?.subtitle?.content, '处理中 | [████████░░░░░░░░░░░░] 42% left');
+
+  resolveReply?.({ text: 'reply:hello' });
+  await inFlight;
   await app.stop();
 });
 
@@ -842,9 +1037,9 @@ test('updates the in-flight status card with streamed reply text and activity su
     header?: { subtitle?: { content?: string }; title?: { content?: string } };
     body?: { elements?: Array<{ tag?: string; content?: string }> };
   };
-  // buildAgentStatusCard shows agent state (rate, cwd/model/session, git) in body
+  // buildAgentStatusCard shows statusLabel | rate info in subtitle when available, agent state in footer
   // streaming content goes to fallbackText
-  assert.equal(progressCard.header?.subtitle?.content, '处理中');
+  assert.match(progressCard.header?.subtitle?.content ?? '', /^处理中(\s*\|.*)?$/);
   assert.match(updatedCards[1]?.fallbackText ?? '', /正在处理消息：/);
   assert.match(updatedCards[1]?.fallbackText ?? '', /Running command: npm test/);
   assert.match(updatedCards[1]?.fallbackText ?? '', /当前回复/);
@@ -853,7 +1048,7 @@ test('updates the in-flight status card with streamed reply text and activity su
     header?: { subtitle?: { content?: string } };
     body?: { elements?: Array<{ tag?: string; content?: string }> };
   };
-  assert.equal(completedCard.header?.title?.content, 'project-a');
+  assert.equal(completedCard.header?.title?.content, 'project-a | 🤖 Claude Code');
   assert.ok(completedCard.body?.elements?.some((element) => String(element.content).includes('final reply')));
 
   await app.stop();

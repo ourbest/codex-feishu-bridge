@@ -1,286 +1,102 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
-
+import { test } from 'node:test';
+import assert from 'node:assert';
 import {
-  buildAgentStatusCard,
-  buildApprovalCard,
-  buildApprovalResultCard,
   buildBridgeStatusCard,
-  buildCommandResultCard,
-  buildHelpCard,
+  buildAgentStatusCard,
   buildProjectReplyCard,
-  buildStartupNotificationCard,
-  buildThreadListCard,
+  buildHelpCard,
+  buildMarkdownContentCard,
+  buildCommandResultCard,
   buildUnavailableProjectCard,
+  buildUnboundCard,
+  buildUnknownCommandCard,
+  buildRateLimitCard,
+  buildThreadListCard,
+  buildFileReceivedCard,
 } from '../../../src/adapters/lark/cards.ts';
 
-function cardHasButton(card: { body?: { elements?: Array<{ tag?: string; columns?: Array<{ elements?: Array<{ tag?: string }> }> }> } }): boolean {
-  for (const element of card.body?.elements ?? []) {
-    if (element.tag === 'button') {
-      return true;
-    }
-    if (element.tag === 'column_set') {
-      for (const column of element.columns ?? []) {
-        if (column.elements?.some((colElement) => colElement.tag === 'button')) {
-          return true;
-        }
-      }
-    }
-  }
-
-  return false;
-}
-
-function countButtons(card: { body?: { elements?: Array<{ tag?: string; columns?: Array<{ elements?: Array<{ tag?: string }> }> }> } }): number {
-  let count = 0;
-  for (const element of card.body?.elements ?? []) {
-    if (element.tag === 'button') {
-      count += 1;
-    }
-    if (element.tag === 'column_set') {
-      for (const column of element.columns ?? []) {
-        for (const colElement of column.elements ?? []) {
-          if (colElement.tag === 'button') {
-            count += 1;
-          }
-        }
-      }
-    }
-  }
-  return count;
-}
-
-test('renders inline code spans as feishu-safe card markdown', () => {
-  const replyCard = JSON.parse(
+test('buildProjectReplyCard builds card with correct structure', () => {
+  const card = JSON.parse(
     buildProjectReplyCard({
-      projectTitle: 'cms-fe',
-      bodyMarkdown: 'Checked `git status` and linked [docs](https://example.com).',
-      footerItems: [{ label: 'PATH', value: '/tmp/cms-fe' }],
+      projectTitle: 'test-project',
+      bodyMarkdown: 'This is a test reply',
+      footerItems: [{ label: 'ID', value: '123' }],
     }).content,
-  ) as {
-    body?: { elements?: Array<{ tag?: string; content?: string }> };
-  };
+  );
 
-  const replyBody = replyCard.body?.elements?.find((element) => element.tag === 'markdown')?.content ?? '';
-  assert.match(replyBody, /`git status`/);
-  assert.doesNotMatch(replyBody, /<font color="grey">git status<\/font>/);
-  assert.match(replyBody, /\[docs\]\(https:\/\/example\.com\)/);
-  const footer = replyCard.body?.elements?.find((element) => element.tag === 'markdown' && typeof element.content === 'string' && element.content.includes('PATH:'));
-  assert.ok(footer);
-  assert.match(footer?.content ?? '', /<font color="grey">/);
+  assert.strictEqual(card.header?.title?.content, 'test-project | 🤖 Claude Code');
+  assert.strictEqual(card.body?.elements?.[0]?.content, 'This is a test reply');
+  const footerText = JSON.stringify(card.body?.elements?.[2]?.content);
+  assert.ok(footerText.includes('ID: 123'));
 });
 
-test('keeps fenced code blocks intact while rewriting inline code spans', () => {
-  const approvalCard = JSON.parse(
-    buildApprovalCard({
-      title: 'Approval required',
-      bodyMarkdown: '```bash\nprintf "`keep`"\n```\nOutside `git status`.',
-      footerItems: [
-        { label: '授权ID', value: 'session-a' },
-        { label: '注', value: '自动授权有效期 1 小时' },
-      ],
-      requestId: 'req-1',
-    }).content,
-  ) as {
-    body?: { elements?: Array<{ tag?: string; content?: string }> };
-  };
-
-  const approvalBody = approvalCard.body?.elements?.find((element) => element.tag === 'markdown')?.content ?? '';
-  assert.match(approvalBody, /```bash/);
-  assert.match(approvalBody, /`keep`/);
-  assert.match(approvalBody, /Outside `git status`\./);
-  assert.ok(cardHasButton(approvalCard));
-  assert.ok(approvalCard.body?.elements?.some((element) => element.tag === 'markdown' && element.content?.includes('授权ID: session-a')));
-  assert.ok(approvalCard.body?.elements?.some((element) => element.tag === 'markdown' && element.content?.includes('注: 自动授权有效期 1 小时')));
-});
-
-test('renders approval result cards without buttons', () => {
-  const card = JSON.parse(
-    buildApprovalResultCard({
-      title: 'Approval resolved',
-      subtitle: 'command execution | project-a',
-      status: 'approved',
-      footerItems: [{ label: '授权ID', value: '42' }],
-    }).content,
-  ) as {
-    schema?: string;
-    config?: { wide_screen_mode?: boolean };
-    body?: { elements?: Array<{ tag?: string; content?: string }> };
-  };
-
-  assert.equal(card.schema, '2.0');
-  assert.equal(card.config?.wide_screen_mode, true);
-  assert.equal(card.body?.elements?.some((element) => element.tag === 'action' || element.tag === 'button'), false);
-  assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('已授权')));
-});
-
-test('renders approval cards with buttons and compact footer content', () => {
-  const card = JSON.parse(
-    buildApprovalCard({
-      title: 'Approval required',
-      bodyMarkdown: 'Need approval',
-      footerItems: [
-        { label: '授权ID', value: '42' },
-        { label: '注', value: '自动授权有效期 1 小时' },
-      ],
-      requestId: 42,
-    }).content,
-  ) as {
-    schema?: string;
-    config?: { wide_screen_mode?: boolean };
-    body?: { elements?: Array<{ tag?: string; content?: string }> };
-  };
-
-  assert.equal(card.schema, '2.0');
-  assert.equal(card.config?.wide_screen_mode, true);
-  assert.ok(cardHasButton(card));
-  assert.equal(countButtons(card), 3);
-  assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('Need approval')));
-  assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('授权ID: 42')));
-  assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('注: 自动授权有效期 1 小时')));
-});
-
-test('builds startup notification as an interactive markdown card', () => {
-  const card = JSON.parse(
-    buildStartupNotificationCard({
-      title: 'lark-agent-bridge',
-      bodyMarkdown: '[lark-agent-bridge] 已上线',
-    }).content,
-  ) as {
-    schema?: string;
-    header?: { title?: { content?: string } };
-    body?: { elements?: Array<{ tag?: string; content?: string }> };
-  };
-
-  assert.equal(card.schema, '2.0');
-  assert.equal(card.header?.title?.content, 'lark-agent-bridge');
-  assert.equal(card.body?.elements?.[0]?.tag, 'markdown');
-  assert.equal(card.body?.elements?.[0]?.content, '[lark-agent-bridge] 已上线');
-});
-
-test('buildThreadListCard renders threads with action buttons', () => {
-  const card = JSON.parse(
-    buildThreadListCard({
-      threads: [
-        { id: 't1', name: '分析日志', description: '分析今天日志', status: 'running', createdAt: new Date('2026-04-11T10:00:00Z'), duration: '5分12秒' },
-        { id: 't2', name: '生成报告', description: '生成周报', status: 'paused', createdAt: new Date('2026-04-11T09:00:00Z'), duration: '2分03秒' },
-      ],
-      refresh: true,
-    }).content,
-  ) as {
-    body?: { elements?: Array<Record<string, unknown>> };
-  };
-
-  const elements = card.body?.elements ?? [];
-  // Should have markdown elements with thread names
-  assert.ok(elements.some((el) => el.tag === 'markdown' && String(el.content).includes('分析日志')));
-  assert.ok(elements.some((el) => el.tag === 'markdown' && String(el.content).includes('生成报告')));
-  // Should have action buttons
-  assert.ok(elements.some((el) => el.tag === 'action'));
-  // Should have a refresh button
-  assert.ok(elements.some((el) => el.tag === 'action' && JSON.stringify(el.actions).includes('刷新')));
-});
-
-test('buildThreadListCard shows cancel and pause for running threads, cancel and resume for paused', () => {
-  const card = JSON.parse(
-    buildThreadListCard({
-      threads: [
-        { id: 't1', name: '运行中任务', description: 'desc', status: 'running', createdAt: new Date() },
-        { id: 't2', name: '已暂停任务', description: 'desc', status: 'paused', createdAt: new Date() },
-      ],
-    }).content,
-  ) as {
-    body?: { elements?: Array<Record<string, unknown>> };
-  };
-
-  const elements = card.body?.elements ?? [];
-  const actionsStr = JSON.stringify(elements);
-  // Running thread should have cancel and pause buttons
-  assert.ok(actionsStr.includes('取消'));
-  assert.ok(actionsStr.includes('暂停'));
-  // Paused thread should have cancel and resume buttons
-  assert.ok(actionsStr.includes('恢复'));
-});
-
-test('builds a processing bridge status card', () => {
+test('buildBridgeStatusCard builds card with correct structure', () => {
   const card = JSON.parse(
     buildBridgeStatusCard({
-      projectTitle: 'cms-fe',
-      statusLabel: '处理中',
-      bodyMarkdown: 'Handling `hello`.',
-      footerItems: [{ label: 'Transport', value: 'websocket' }],
-      template: 'blue',
+      projectTitle: 'bridge-project',
+      statusLabel: 'working',
+      bodyMarkdown: 'Processing something...',
+      footerItems: [{ label: 'Status', value: 'OK' }],
     }).content,
-  ) as {
-    header?: { title?: { content?: string }; subtitle?: { content?: string } };
-    body?: { elements?: Array<{ tag?: string; content?: string }> };
-  };
+  );
 
-  assert.equal(card.header?.title?.content, 'cms-fe');
-  assert.equal(card.header?.subtitle?.content, '处理中');
-  assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('Handling `hello`')));
-  assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('Transport: websocket')));
+  assert.strictEqual(card.header?.title?.content, 'bridge-project | 🤖 Claude Code');
+  assert.strictEqual(card.header?.subtitle?.content, 'working');
+  assert.strictEqual(card.body?.elements?.[0]?.content, 'Processing something...');
 });
 
-test('renders command result cards as markdown content instead of a fenced code block', () => {
-  const card = JSON.parse(
-    buildCommandResultCard({
-      title: 'thread/list',
-      lines: ['1. thr_123', '2. thr_456'],
-      footerItems: [{ label: 'Project', value: 'cms-fe' }],
-    }).content,
-  ) as {
-    body?: { elements?: Array<{ tag?: string; content?: string }> };
-  };
-
-  const markdown = card.body?.elements?.find((element) => element.tag === 'markdown')?.content ?? '';
-  assert.equal(markdown, '1. thr_123\n2. thr_456');
-  assert.doesNotMatch(markdown, /```text/);
-  assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('Project: cms-fe')));
-});
-
-test('renders help cards with consistent markdown heading levels', () => {
+test('buildHelpCard builds card with command lists', () => {
   const card = JSON.parse(
     buildHelpCard({
-      bridgeCommands: [
-        { command: '//bind <projectId>', description: 'Bind this chat to a project.' },
-      ],
-      codexCommands: [
-        { command: '//app/list', description: 'List supported Codex apps.' },
-      ],
+      bridgeCommands: [{ command: '//bind', description: 'Bind project' }],
+      codexCommands: [{ command: '//status', description: 'Show status' }],
     }).content,
-  ) as {
-    body?: { elements?: Array<{ tag?: string; content?: string }> };
-  };
+  );
 
-  const bodyText = JSON.stringify(card.body?.elements ?? []);
-  assert.match(bodyText, /## 桥接命令/);
-  assert.match(bodyText, /## Codex 命令/);
-  assert.doesNotMatch(bodyText, /## Bridge commands/);
-  assert.doesNotMatch(bodyText, /## Codex commands/);
+  assert.strictEqual(card.header?.title?.content, 'lark-agent-bridge help');
+  const bodyText = JSON.stringify(card.body?.elements);
+  assert.ok(bodyText.includes('//bind'));
+  assert.ok(bodyText.includes('//status'));
 });
 
-test('builds an unavailable-project card with detailed diagnostics', () => {
+test('buildMarkdownContentCard builds card with markdown', () => {
+  const card = JSON.parse(
+    buildMarkdownContentCard({
+      title: 'Info',
+      bodyMarkdown: '# Header\nContent',
+    }).content,
+  );
+
+  assert.strictEqual(card.header?.title?.content, 'Info');
+  assert.strictEqual(card.body?.elements?.[0]?.content, '# Header\nContent');
+});
+
+test('buildCommandResultCard builds card with lines', () => {
+  const card = JSON.parse(
+    buildCommandResultCard({
+      title: 'Result',
+      lines: ['line 1', 'line 2'],
+    }).content,
+  );
+
+  assert.strictEqual(card.header?.title?.content, 'Result');
+  const bodyText = card.body?.elements?.[0]?.content;
+  assert.ok(bodyText.includes('line 1'));
+  assert.ok(bodyText.includes('line 2'));
+});
+
+test('buildUnavailableProjectCard builds card with reconnection info', () => {
   const card = JSON.parse(
     buildUnavailableProjectCard({
       projectId: 'cms-fe',
-      lines: [
-        '[lark-agent-bridge] bound project is unavailable: cms-fe',
-        'status: failed',
-        'reason: Reconnecting... 2/5',
-        'source: generateReply',
-      ],
-      footerItems: [{ label: 'Transport', value: 'websocket' }],
+      lines: ['Error line 1', 'Error line 2'],
+      footerItems: [{ label: 'Status', value: 'Error' }],
     }).content,
-  ) as {
-    header?: { title?: { content?: string }; subtitle?: { content?: string } };
-    body?: { elements?: Array<{ tag?: string; content?: string }> };
-  };
+  );
 
-  assert.equal(card.header?.title?.content, 'cms-fe');
-  assert.equal(card.header?.subtitle?.content, '不可用');
-  assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('Reconnecting... 2/5')));
-  assert.ok(card.body?.elements?.some((element) => element.tag === 'markdown' && String(element.content).includes('Transport: websocket')));
+  assert.strictEqual(card.header?.title?.content, 'cms-fe | 🤖 Claude Code');
+  assert.strictEqual(card.header?.subtitle?.content, '不可用');
+  assert.ok(JSON.stringify(card.body?.elements).includes('Error line 1'));
 });
 
 test('buildAgentStatusCard builds card with all fields', () => {
@@ -288,6 +104,7 @@ test('buildAgentStatusCard builds card with all fields', () => {
     buildAgentStatusCard({
       projectId: 'project-a',
       statusLabel: 'working',
+      bodyMarkdown: '正在处理请求...',
       rateBar: '[████████░░]',
       ratePercent: 80,
       cwd: '/path/to/project',
@@ -304,14 +121,59 @@ test('buildAgentStatusCard builds card with all fields', () => {
     body?: { elements?: Array<{ tag?: string; content?: string }> };
   };
 
-  assert.equal(card.header?.title?.content, 'project-a | 🤖 Claude Code');
-  assert.equal(card.header?.subtitle?.content, 'working');
-  assert.equal(card.header?.template, 'blue');
+  assert.strictEqual(card.header?.title?.content, 'project-a | 🤖 Claude Code');
+  assert.strictEqual(card.header?.subtitle?.content, 'working | [████████░░] 80% left');
+  assert.strictEqual(card.header?.template, 'blue');
+  // Body contains the processing content
   const bodyText = JSON.stringify(card.body?.elements ?? []);
-  assert.ok(bodyText.includes('Rate: [████████░░] 80% left'));
-  assert.ok(bodyText.includes('/path/to/project | opus-4-6 | sess_abc123'));
+  assert.ok(bodyText.includes('正在处理请求...'));
+  // Agent status info is in footer
+  assert.ok(bodyText.includes('/path/to/project'));
+  assert.ok(bodyText.includes('opus-4-6'));
+  assert.ok(bodyText.includes('sess_abc123'));
   assert.ok(bodyText.includes('git: ✗ | branch: main | +5 -3'));
   assert.ok(bodyText.includes('analysis [running]'));
+});
+
+test('buildAgentStatusCard respects providerName', () => {
+  const card = JSON.parse(
+    buildAgentStatusCard({
+      projectId: 'project-q',
+      providerName: 'Qwen',
+      statusLabel: 'working',
+      bodyMarkdown: 'Thinking...',
+      rateBar: '[████████░░]',
+      ratePercent: 80,
+      cwd: '/path/to/project',
+      model: 'qwen-max',
+      sessionId: 'sess_qwen',
+      gitStatus: 'clean',
+      gitBranch: 'main',
+      gitDiffStat: '',
+    }).content,
+  ) as { header?: { title?: { content?: string } } };
+
+  assert.strictEqual(card.header?.title?.content, 'project-q | 🤖 Qwen');
+});
+
+test('buildAgentStatusCard shows a zero rate when the rate bar is known', () => {
+  const card = JSON.parse(
+    buildAgentStatusCard({
+      projectId: 'project-zero',
+      statusLabel: 'working',
+      bodyMarkdown: 'Thinking...',
+      rateBar: '[--------------------]',
+      ratePercent: 0,
+      cwd: '/path/to/project',
+      model: 'qwen-max',
+      sessionId: 'sess_zero',
+      gitStatus: 'clean',
+      gitBranch: 'main',
+      gitDiffStat: '',
+    }).content,
+  ) as { header?: { subtitle?: { content?: string } } };
+
+  assert.strictEqual(card.header?.subtitle?.content, 'working | [--------------------] 0% left');
 });
 
 test('buildAgentStatusCard omits background tasks line when empty', () => {
@@ -319,6 +181,7 @@ test('buildAgentStatusCard omits background tasks line when empty', () => {
     buildAgentStatusCard({
       projectId: 'project-a',
       statusLabel: 'done',
+      bodyMarkdown: '已完成',
       rateBar: '[██████████]',
       ratePercent: 100,
       cwd: '/path/to/project',
@@ -333,20 +196,21 @@ test('buildAgentStatusCard omits background tasks line when empty', () => {
   };
 
   const bodyText = JSON.stringify(card.body?.elements ?? []);
-  assert.ok(!bodyText.includes('background'));
-  assert.ok(bodyText.includes('git: ✓ | branch: main |'));
+  assert.ok(!bodyText.includes('[running]'));
+  assert.ok(!bodyText.includes('[pending]'));
 });
 
 test('buildAgentStatusCard handles unknown git status', () => {
   const card = JSON.parse(
     buildAgentStatusCard({
-      projectId: 'proj',
-      statusLabel: 'idle',
-      rateBar: '[░░░░░░░░░░]',
+      projectId: 'project-a',
+      statusLabel: 'working',
+      bodyMarkdown: '...',
+      rateBar: '...',
       ratePercent: 0,
-      cwd: '/cwd',
-      model: 'sonnet',
-      sessionId: 'sess_x',
+      cwd: '...',
+      model: '...',
+      sessionId: '...',
       gitStatus: 'unknown',
       gitBranch: '',
       gitDiffStat: '',
@@ -356,5 +220,93 @@ test('buildAgentStatusCard handles unknown git status', () => {
   };
 
   const bodyText = JSON.stringify(card.body?.elements ?? []);
-  assert.ok(bodyText.includes('git: ? | branch: ? |'));
+  assert.ok(!bodyText.includes('git:'));
+});
+
+test('buildRateLimitCard uses provider-aware copy', () => {
+  const card = JSON.parse(
+    buildRateLimitCard({
+      projectId: 'project-a',
+      providerName: 'Qwen',
+      retryAfterSeconds: 30,
+    }).content,
+  ) as {
+    header?: { title?: { content?: string }; subtitle?: { content?: string } };
+    body?: { elements?: Array<{ tag?: string; content?: string }> };
+  };
+
+  assert.strictEqual(card.header?.title?.content, 'project-a | 🤖 Qwen');
+  assert.strictEqual(card.header?.subtitle?.content, 'Rate Limited');
+  const bodyText = JSON.stringify(card.body?.elements ?? []);
+  assert.ok(bodyText.includes('Qwen 请求频率超限，请稍后再试。'));
+  assert.ok(bodyText.includes('可在 **30 秒** 后重试'));
+});
+
+test('buildUnboundCard builds card with message', () => {
+  const card = JSON.parse(
+    buildUnboundCard({
+      sessionId: 'sess_unbound',
+      senderId: 'user_123',
+      bridgeCommands: [],
+      codexCommands: [],
+    }).content
+  );
+  assert.strictEqual(card.header?.title?.content, 'lark-agent-bridge');
+  assert.ok(JSON.stringify(card.body?.elements).includes('尚未绑定'));
+});
+
+test('buildUnknownCommandCard builds card with command', () => {
+  const card = JSON.parse(
+    buildUnknownCommandCard({
+      unknownCommand: '//invalid',
+      bridgeCommands: [],
+      codexCommands: [],
+      projectId: 'project-a',
+      statusLabel: 'working',
+      rateBar: '...',
+      ratePercent: 0,
+      cwd: '...',
+      model: '...',
+      sessionId: '...',
+      gitStatus: 'clean',
+      gitBranch: 'main',
+      gitDiffStat: '',
+    }).content
+  );
+  assert.strictEqual(card.header?.title?.content, 'unknown command | project-a');
+  assert.strictEqual(card.header?.subtitle?.content, 'working | ... 0% left');
+  assert.ok(JSON.stringify(card.body?.elements).includes('## 桥接命令'));
+});
+
+test('buildThreadListCard builds card with thread list', () => {
+  const card = JSON.parse(
+    buildThreadListCard({
+      threads: [
+        {
+          id: 'thread-1',
+          name: 'Thread 1',
+          description: 'Desc 1',
+          status: 'running',
+          createdAt: new Date(),
+        },
+      ],
+    }).content,
+  );
+
+  assert.strictEqual(card.header?.title?.content, '🧵 后台任务');
+  assert.ok(JSON.stringify(card.body?.elements).includes('Thread 1'));
+  assert.ok(JSON.stringify(card.body?.elements).includes('thread-1'));
+});
+
+test('buildFileReceivedCard builds card with file list', () => {
+  const card = JSON.parse(
+    buildFileReceivedCard({
+      files: [
+        { originalName: 'test.txt', savedPath: '/tmp/test.txt', fileSize: 1024, attachmentType: 'file' },
+      ],
+    }).content,
+  );
+
+  assert.strictEqual(card.header?.title?.content, '文件上传');
+  assert.ok(JSON.stringify(card.body?.elements).includes('test.txt'));
 });

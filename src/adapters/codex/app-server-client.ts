@@ -533,6 +533,7 @@ export class CodexAppServerClient {
         },
       });
       return;
+    }
 
     if (message.method === 'item/agentMessage/delta') {
       if (this.currentReplyAborted) {
@@ -603,9 +604,11 @@ export class CodexAppServerClient {
   }
 
   private buildArgs(transport: 'stdio' | 'websocket', websocketUrl: string | null): string[] {
-    const args = [...(this.options.args ?? ['app-server'])];
+    const baseArgs = this.options.args ?? ['app-server'];
+    const args = [...baseArgs];
     if (transport === 'websocket') {
-      args.push('--listen', websocketUrl ?? 'ws://127.0.0.1:0');
+      const listenUrl = websocketUrl ?? 'ws://127.0.0.1:0';
+      args.push('--listen', listenUrl);
     }
     return args;
   }
