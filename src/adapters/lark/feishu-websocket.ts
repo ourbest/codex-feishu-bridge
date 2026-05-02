@@ -119,6 +119,11 @@ export function createFeishuWebSocketTransport(options: FeishuWebSocketTransport
           content?: string;
           create_time?: string;
           message_type?: string;
+          mentions?: Array<{
+            key?: string;
+            id?: { open_id?: string };
+            mentioned_type?: string;
+          }>;
         };
       }) {
         const msg = data?.message;
@@ -130,6 +135,19 @@ export function createFeishuWebSocketTransport(options: FeishuWebSocketTransport
         let attachments: InboundAttachment[] | undefined;
         let mentioned = false;
         const msgType = msg.message_type ?? '';
+
+        // 检查 mentions 字段，检测是否 @ 了机器人
+        // 如果消息有 mentions 但不包含机器人自身，说明是 @ 其他人的消息，跳过处理
+        if (msg.mentions && msg.mentions.length > 0) {
+          const botMentioned = !!options.botOpenId && msg.mentions.some(m => m.id?.open_id === options.botOpenId);
+          if (!botMentioned) {
+            console.log(`[feishu] message mentions other users but not bot, ignoring: ${JSON.stringify(msg.mentions)}`);
+            return;
+          }
+          // Bot was mentioned, set flag and continue processing
+          mentioned = true;
+          console.log(`[feishu] mentions field present: ${JSON.stringify(msg.mentions)}`);
+        }
 
         console.log(`[feishu] message received: msgType=${msgType}, chatId=${msg.chat_id}, messageId=${msg.message_id}, contentLength=${msg.content?.length ?? 0}`);
 

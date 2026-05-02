@@ -81,6 +81,7 @@ test('normalizes P2ImMessageReceiveV1 event to LarkEventPayload', async () => {
     text: 'hello world',
     senderId: 'user_xyz',
     timestamp: '2026-04-03T00:00:00.000Z',
+    mentioned: false,
   });
 });
 

@@ -1418,11 +1418,11 @@ export function createBridgeApp(options: {
               projectTitle: boundProjectConfig?.projectInstanceId ?? boundProjectId,
               providerName,
               statusLabel: '处理中',
-              bodyMarkdown: `正在处理消息：\n\n\`\`\`text\n${sanitizeCodeFence(message.text)}\n\`\`\``,
+              bodyMarkdown: `正在处理消息：\n\n\`\`\`text\n${sanitizeCodeFence(text)}\n\`\`\``,
               footerItems: statusFooterItems,
               template: 'blue',
             }),
-        fallbackText: buildProcessingStatusFallback(boundProjectId, message.text),
+        fallbackText: buildProcessingStatusFallback(boundProjectId, text),
       });
 
       statusCardMessageId = statusCardResult?.messageId ?? null;

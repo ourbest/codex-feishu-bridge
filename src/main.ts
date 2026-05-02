@@ -1033,8 +1033,11 @@ async function createFeishuWebSocketTransportFromRuntime(feishuRuntime: { appId:
   // Fetch bot open_id to detect when bot is @mentioned vs other users
   let botOpenId: string | undefined;
   try {
-    const botInfo = await restClient.bot.v6.botInfo.get({});
-    botOpenId = botInfo.data?.bot?.open_id;
+    const botInfoResponse = await restClient.request({
+      method: 'GET',
+      url: '/open-apis/bot/v3/info',
+    }) as { bot?: { open_id?: string } };
+    botOpenId = botInfoResponse.bot?.open_id;
     console.log(`[main] bot open_id: ${botOpenId ?? 'unknown'}`);
   } catch (error) {
     console.warn(`[main] failed to fetch bot info: ${error}`);
