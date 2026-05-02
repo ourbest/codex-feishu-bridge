@@ -242,6 +242,11 @@ export function createFeishuWebSocketTransport(options: FeishuWebSocketTransport
           mentioned,
         };
 
+        console.log(`[feishu] event built: msgType=${msgType}, mentioned=${mentioned}, text="${text.substring(0, 50)}"`);
+        if (mentioned) {
+          console.log(`[feishu] bot was mentioned in message`);
+        }
+
         if (attachments !== undefined) {
           event.attachments = attachments;
         }

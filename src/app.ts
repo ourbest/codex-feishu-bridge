@@ -853,7 +853,9 @@ export function createBridgeApp(options: {
 
     // Check mute state: if muted and not @mentioned, ignore all messages including //mute
     // Even //mute on/off requires @mention to avoid multi-bot conflicts
-    if (muteService.isMuted(message.sessionId) && !message.mentioned) {
+    const isMuted = muteService.isMuted(message.sessionId);
+    console.log(`[bridge] mute check: sessionId=${message.sessionId}, isMuted=${isMuted}, mentioned=${message.mentioned}, text="${text.substring(0, 50)}"`);
+    if (isMuted && !message.mentioned) {
       console.log(`[bridge] session ${message.sessionId} is muted, ignoring message`);
       return;
     }
