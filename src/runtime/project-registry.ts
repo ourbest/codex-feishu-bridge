@@ -413,6 +413,18 @@ export function createProjectRegistry(options: ProjectRegistryOptions): ProjectR
       },
     });
     const client = providerManager.getClient();
+
+    // Attach output handlers to all already-started non-active provider clients
+    for (const startedClient of providerManager.getAllStartedClients()) {
+      if (startedClient !== client) {
+        attachServerRequestHandler(projectId, startedClient);
+        attachStatusHandler(projectId, startedClient);
+        attachTextDeltaHandler(projectId, startedClient);
+        attachThreadChangedHandler(projectId, startedClient);
+        attachSystemInitHandler(projectId, startedClient);
+      }
+    }
+
     const entry = {
       client,
       providerManager,
