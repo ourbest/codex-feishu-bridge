@@ -704,3 +704,21 @@ test('marks a project as removed after it disappears from a previous config snap
     sessionCount: 0,
   });
 });
+
+test('agentIdleTimeoutMs is forwarded to ProviderManager', async () => {
+  const registry = createProjectRegistry({
+    agentIdleTimeoutMs: 1234,
+    getProjectConfig: (id) =>
+      id === 'p1'
+        ? {
+            projectInstanceId: 'p1',
+            websocketUrl: 'ws://localhost:4000',
+            cwd: '/repo/p1',
+          }
+        : null,
+    createClient: () => createMockClient('p1'),
+  });
+  await registry.onBindingChanged({ type: 'bound', projectId: 'p1', sessionId: 's1' });
+  const entry = (registry as any).activeProjects?.get('p1');
+  assert.equal((entry?.providerManager as any)?.idleTimeoutMs, 1234);
+});

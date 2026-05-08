@@ -70,6 +70,7 @@ export interface ProjectRegistryOptions {
   onSystemInit?: (projectInstanceId: string, data: SystemInitData) => void;
   getLastThread?: (projectInstanceId: string, sessionId: string) => string | null;
   setLastThread?: (projectInstanceId: string, sessionId: string, threadId: string) => void;
+  agentIdleTimeoutMs?: number;
 }
 
 export interface ProjectRegistry {
@@ -404,6 +405,7 @@ export function createProjectRegistry(options: ProjectRegistryOptions): ProjectR
       getPersistedState: () => options.bridgeStateStore?.getProjectState(projectId) ?? null,
       setPersistedState: (state) => options.bridgeStateStore?.setProjectState(state),
       allocatePort: options.allocateWebSocketPort,
+      idleTimeoutMs: options.agentIdleTimeoutMs,
       onClientCreated: (_, client) => {
         attachServerRequestHandler(projectId, client);
         attachStatusHandler(projectId, client);
@@ -806,6 +808,7 @@ export function createProjectRegistry(options: ProjectRegistryOptions): ProjectR
           projectConfig: config,
           createClient: (input) => options.createClient(projectInstanceId, { ...input }, input.provider),
           allocatePort: options.allocateWebSocketPort,
+          idleTimeoutMs: options.agentIdleTimeoutMs,
         });
 
         return providerManager.getProviderStates().map((state) => ({
@@ -861,6 +864,7 @@ export function createProjectRegistry(options: ProjectRegistryOptions): ProjectR
           getPersistedState: () => options.bridgeStateStore?.getProjectState(projectInstanceId) ?? null,
           setPersistedState: (state) => options.bridgeStateStore?.setProjectState(state),
           allocatePort: options.allocateWebSocketPort,
+          idleTimeoutMs: options.agentIdleTimeoutMs,
         });
         await providerManager.setActiveProvider(provider);
         return;
@@ -902,5 +906,8 @@ export function createProjectRegistry(options: ProjectRegistryOptions): ProjectR
       const projectIds = Array.from(activeProjects.keys());
       await Promise.all(projectIds.map((id) => disconnectProject(id)));
     },
+
+    // Exposed for testing
+    activeProjects,
   };
 }

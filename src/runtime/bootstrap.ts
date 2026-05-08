@@ -67,6 +67,10 @@ export function resolveAgentIdleTimeoutHours(env: RuntimeEnv = process.env): num
   return Math.floor(parsed);
 }
 
+export function resolveAgentIdleTimeoutMs(env: RuntimeEnv = process.env): number {
+  return resolveAgentIdleTimeoutHours(env) * 60 * 60 * 1000;
+}
+
 export function createLocalDevLarkTransport(options?: {
   onSend?: (message: { sessionId: string; text: string; format?: 'auto' | 'text' }) => void;
   onSendFile?: (message: { sessionId: string; filePath: string; fileName: string; fallbackText?: string }) => void;

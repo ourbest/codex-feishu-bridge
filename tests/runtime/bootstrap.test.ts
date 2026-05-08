@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   createLocalDevLarkTransport,
   resolveAgentIdleTimeoutHours,
+  resolveAgentIdleTimeoutMs,
   resolveBridgeConfig,
   resolveProjectsFilePath,
   resolveProjectsRootPath,
@@ -205,4 +206,8 @@ test('resolveAgentIdleTimeoutHours floors floating point', () => {
 test('resolveAgentIdleTimeoutHours returns 48 on empty string', () => {
   assert.equal(resolveAgentIdleTimeoutHours({ BRIDGE_AGENT_IDLE_TIMEOUT_HOURS: '' }), 48);
   assert.equal(resolveAgentIdleTimeoutHours({ BRIDGE_AGENT_IDLE_TIMEOUT_HOURS: '   ' }), 48);
+});
+
+test('resolveAgentIdleTimeoutMs returns hours converted to ms', () => {
+  assert.equal(resolveAgentIdleTimeoutMs({ BRIDGE_AGENT_IDLE_TIMEOUT_HOURS: '2' }), 2 * 60 * 60 * 1000);
 });
