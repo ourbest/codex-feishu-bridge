@@ -156,6 +156,7 @@ export class ProviderManager {
   private readonly clientProxy: CodexProjectClient;
   private readonly idleTimeoutMs: number;
   private scanTimer: NodeJS.Timeout | null = null;
+  private readonly stoppingProviders = new Set<string>();
 
   constructor(options: ProviderManagerOptions) {
     this.projectConfig = buildBaseProjectConfig(options);
@@ -372,7 +373,9 @@ export class ProviderManager {
   }
 
   async ensureProviderClient(provider: string): Promise<CodexProjectClient> {
-    return await this.createStartedClient(provider);
+    const client = await this.createStartedClient(provider);
+    this.markActivity(provider);
+    return client;
   }
 
   getStartedClient(provider: string): CodexProjectClient | null {
@@ -410,15 +413,33 @@ export class ProviderManager {
     return [...this.entries.entries()].filter(([, entry]) => entry.client !== null).map(([provider]) => provider);
   }
 
+  getStartedEntries(): Array<{ providerId: string; client: CodexProjectClient }> {
+    const result: Array<{ providerId: string; client: CodexProjectClient }> = [];
+    for (const [providerId, entry] of this.entries) {
+      if (entry.client !== null) {
+        result.push({ providerId, client: entry.client });
+      }
+    }
+    return result;
+  }
+
   private async stopProvider(provider: string): Promise<void> {
+    if (this.stoppingProviders.has(provider)) {
+      return;
+    }
     const entry = this.entries.get(provider);
     if (entry === undefined || entry.client === null) {
       return;
     }
+    this.stoppingProviders.add(provider);
     const client = entry.client;
     entry.client = null;
-    await client.stop();
-    this.persistState();
+    try {
+      await client.stop();
+      this.persistState();
+    } finally {
+      this.stoppingProviders.delete(provider);
+    }
   }
 
   private async scanIdle(): Promise<void> {

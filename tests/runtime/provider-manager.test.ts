@@ -246,3 +246,39 @@ test('stop() clears the idle scan timer', async () => {
   await manager.stop();
   assert.equal((manager as any).scanTimer, null);
 });
+
+test('stopProvider is idempotent under concurrent calls', async () => {
+  const stops: string[] = [];
+  const manager = new ProviderManager({
+    projectInstanceId: 'project-a',
+    cwd: '/repo/project-a',
+    createClient: ({ provider }) => ({
+      generateReply: async () => 'ok',
+      stop: async () => {
+        stops.push(provider.id);
+        await new Promise((r) => setTimeout(r, 10));
+      },
+    }),
+  });
+
+  await manager.ensureProviderClient('codex');
+
+  // Fire two concurrent stopProvider calls
+  await Promise.all([
+    (manager as any).stopProvider('codex'),
+    (manager as any).stopProvider('codex'),
+  ]);
+
+  assert.equal(manager.getStartedClient('codex'), null);
+  assert.equal(stops.length, 1, 'stop should only be called once');
+});
+
+test('does not start scan timer when idleTimeoutMs is 0', () => {
+  const manager = new ProviderManager({
+    projectInstanceId: 'project-a',
+    cwd: '/repo/project-a',
+    idleTimeoutMs: 0,
+    createClient: () => ({ generateReply: async () => 'ok', stop: async () => {} }),
+  });
+  assert.equal((manager as any).scanTimer, null);
+});
