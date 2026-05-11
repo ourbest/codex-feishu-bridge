@@ -96,6 +96,7 @@ export interface ProjectRegistry {
   describeProject(projectInstanceId: string): Promise<ProjectState>;
   getProjectDiagnostics(projectInstanceId: string): Promise<ProjectDiagnostics | null>;
   stop(): Promise<void>;
+  restartProjectProvider(projectInstanceId: string, provider: string): Promise<void>;
 }
 
 export interface ProjectState {
@@ -922,6 +923,22 @@ export function createProjectRegistry(options: ProjectRegistryOptions): ProjectR
     async stop() {
       const projectIds = Array.from(activeProjects.keys());
       await Promise.all(projectIds.map((id) => disconnectProject(id)));
+    },
+
+    async restartProjectProvider(projectInstanceId: string, provider: string): Promise<void> {
+      const entry = activeProjects.get(projectInstanceId);
+      if (!entry) {
+        throw new Error(`Project ${projectInstanceId} is not active`);
+      }
+
+      const config = options.getProjectConfig(projectInstanceId);
+      if (!config) {
+        throw new Error(`Project ${projectInstanceId} is no longer configured`);
+      }
+
+      entry.config = config;
+      entry.providerManager.updateProjectConfig(config);
+      await entry.providerManager.restartProvider(provider);
     },
 
     // Exposed for testing

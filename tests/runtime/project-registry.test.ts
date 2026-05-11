@@ -829,3 +829,75 @@ test('textDelta from a provider client triggers markActivity on that provider', 
   const after = codexEntry.lastActivityAt;
   assert.ok(after > before, `expected ${after} > ${before}`);
 });
+
+test('restartProjectProvider stops and respawns the specified provider with latest config', async () => {
+  const stopCalls: string[] = [];
+  const createCalls: Array<{ provider: string; model?: string }> = [];
+  const registry = createProjectRegistry({
+    getProjectConfig: (id) =>
+      id === 'project-a'
+        ? { projectInstanceId: 'project-a', websocketUrl: 'ws://localhost:4000', model: 'gpt-4' }
+        : null,
+    createClient: (projectId, config, provider) => {
+      createCalls.push({ provider: provider?.id ?? 'unknown', model: config.model });
+      return {
+        generateReply: async ({ text }) => `${provider?.id ?? 'unknown'}:${text}`,
+        stop: async () => {
+          stopCalls.push(provider?.id ?? 'unknown');
+        },
+      };
+    },
+  });
+
+  await registry.onBindingChanged({ type: 'bound', projectId: 'project-a', sessionId: 'chat-1' });
+
+  // Start the codex provider
+  const handler = registry.getHandler('project-a');
+  assert.ok(handler !== null);
+  await handler!({ projectInstanceId: 'project-a', message: { text: 'hello' } });
+
+  assert.ok(createCalls.some((c) => c.provider === 'codex'));
+  assert.deepEqual(stopCalls, []);
+
+  // Restart the codex provider
+  await registry.restartProjectProvider('project-a', 'codex');
+
+  assert.ok(stopCalls.includes('codex'));
+  assert.ok(createCalls.some((c) => c.provider === 'codex'));
+  // Should have at least 2 create calls (initial + restart)
+  assert.equal(createCalls.filter((c) => c.provider === 'codex').length, 2);
+});
+
+test('restartProjectProvider throws when project is not active', async () => {
+  const registry = createProjectRegistry({
+    getProjectConfig: (id) =>
+      id === 'project-a'
+        ? { projectInstanceId: 'project-a', websocketUrl: 'ws://localhost:4000' }
+        : null,
+    createClient: () => ({ generateReply: async () => 'ok', stop: async () => {} }),
+  });
+
+  await assert.rejects(
+    async () => await registry.restartProjectProvider('project-a', 'codex'),
+    /Project project-a is not active/,
+  );
+});
+
+test('restartProjectProvider throws when project is no longer configured', async () => {
+  let returnConfig = true;
+  const registry = createProjectRegistry({
+    getProjectConfig: (id) =>
+      id === 'project-a' && returnConfig
+        ? { projectInstanceId: 'project-a', websocketUrl: 'ws://localhost:4000' }
+        : null,
+    createClient: () => ({ generateReply: async () => 'ok', stop: async () => {} }),
+  });
+
+  await registry.onBindingChanged({ type: 'bound', projectId: 'project-a', sessionId: 'chat-1' });
+  returnConfig = false;
+
+  await assert.rejects(
+    async () => await registry.restartProjectProvider('project-a', 'codex'),
+    /Project project-a is no longer configured/,
+  );
+});
